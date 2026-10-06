@@ -1,5 +1,6 @@
 from groq import Groq
 from config import GROQ_API_KEY, MODEL_NAME
+import time
 
 client = Groq(api_key=GROQ_API_KEY)
 
@@ -42,6 +43,45 @@ def chat(user_message,user_id, org_name="OrgMind"):
     
     return assistant_message
 
+def chat_stream(user_message, user_id, org_name="OrgMind"):
+    if user_id not in user_sessions:
+        user_sessions[user_id] = []
+    
+    user_sessions[user_id].append({
+        "role": "user",
+        "content": user_message
+    })
+    
+    messages = [
+        {"role": "system", "content": SYSTEM_PROMPT.format(
+            organization_name=org_name
+        )}
+    ] + user_sessions[user_id]
+    
+    stream = client.chat.completions.create(
+        model=MODEL_NAME,
+        messages=messages,
+        stream=True
+    )
+    
+    full_response = ""
+    
+    for chunk in stream:
+        token = chunk.choices[0].delta.content
+        if token is not None:
+            print(token, end="", flush=True)
+            full_response += token
+    
+    print()
+    
+    user_sessions[user_id].append({
+        "role": "assistant",
+        "content": full_response
+    })
+    time.sleep(0.15)
+    
+    return full_response
+
 if __name__ == "__main__":
     print("OrgBot is running! Type 'quit' to exit.")
     org = input("Enter organization name: ")
@@ -51,5 +91,8 @@ if __name__ == "__main__":
         user_input = input("You: ")
         if user_input.lower() == "quit":
             break
-        response = chat(user_input, user_id, org)
-        print(f"OrgBot: {response}")
+        print("OrgBot: ", end="", flush=True)
+        response = chat_stream(user_input, user_id, org)
+
+
+
