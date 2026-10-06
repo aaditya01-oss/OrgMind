@@ -12,20 +12,44 @@ If you don't know something, say so honestly.
 Never make up information.
 """
 
-def chat(user_message, org_name="OrgMind"):
+user_sessions = {}
+
+def chat(user_message,user_id, org_name="OrgMind"):
+    if user_id not in user_sessions:
+        user_sessions[user_id] = []
+    user_sessions[user_id].append({
+        "role": "user",
+        "content": user_message
+    })
+    
+    messages = [
+        {"role": "system", "content": SYSTEM_PROMPT.format(
+            organization_name=org_name
+        )}
+    ] + user_sessions[user_id]
+    
     response = client.chat.completions.create(
         model=MODEL_NAME,
-        messages=[
-            {"role": "system", "content": SYSTEM_PROMPT.format(
-                organization_name=org_name
-            )},
-            {"role": "user", "content": user_message}
-        ]
+        messages=messages
     )
-    return response.choices[0].message.content
+    
+    assistant_message = response.choices[0].message.content
+    
+    user_sessions[user_id].append({
+        "role": "assistant",
+        "content": assistant_message
+    })
+    
+    return assistant_message
 
 if __name__ == "__main__":
-    print("OrgBot is running...")
-    user_input = input("You: ")
-    response = chat(user_input)
-    print(f"OrgBot: {response}")
+    print("OrgBot is running! Type 'quit' to exit.")
+    org = input("Enter organization name: ")
+    user_id = input("Enter your user ID: ")
+    
+    while True:
+        user_input = input("You: ")
+        if user_input.lower() == "quit":
+            break
+        response = chat(user_input, user_id, org)
+        print(f"OrgBot: {response}")
