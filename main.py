@@ -3,6 +3,7 @@ from config import GROQ_API_KEY, MODEL_NAME
 import time
 import json
 
+
 client = Groq(api_key=GROQ_API_KEY)
 
 SYSTEM_PROMPT = """
@@ -17,6 +18,7 @@ Never make up information.
 user_sessions = {}
 
 def chat(user_message,user_id, org_name="OrgMind"):
+    trim_history(user_id)
     if user_id not in user_sessions:
         user_sessions[user_id] = []
     user_sessions[user_id].append({
@@ -45,6 +47,7 @@ def chat(user_message,user_id, org_name="OrgMind"):
     return assistant_message
 
 def chat_stream(user_message, user_id, org_name="OrgMind"):
+    trim_history(user_id)
     if user_id not in user_sessions:
         user_sessions[user_id] = []
     
@@ -117,6 +120,29 @@ def get_structured_response(user_message, user_id, org_name="OrgMind"):
         return parsed
     except json.JSONDecodeError:
         return {"error": "Failed to parse JSON", "raw": raw}
+
+import tiktoken
+
+def count_tokens(messages, model="gpt-4"):
+    encoder = tiktoken.get_encoding("cl100k_base")
+    total = 0
+    for message in messages:
+        total += len(encoder.encode(message["content"]))
+    return total
+
+def trim_history(user_id, max_tokens=4000):
+    if user_id not in user_sessions:
+        return
+    
+    while True:
+        current_tokens = count_tokens(user_sessions[user_id])
+        if current_tokens <= max_tokens:
+            break
+        if len(user_sessions[user_id]) == 0:
+            break
+        user_sessions[user_id].pop(0)
+
+
 
 if __name__ == "__main__":
     print("OrgBot is running! Type 'quit' to exit.")
