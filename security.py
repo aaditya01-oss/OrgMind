@@ -13,7 +13,13 @@ INJECTION_PATTERNS = [
     r"developer\s+mode",
     r"<!--.*?-->",
     r"\[system\]",
+    r"ignore\s+(all\s+)?(commands?|rules?|guidelines?)",
+    r"run\s+(the\s+)?(debug|diagnostic|admin|system)",
+    r"override\s+(all\s+)?(commands?|rules?|settings?)",
     r"disregard\s+(your\s+)?(previous|prior|all)",
+    r"ignore\s+and\s+",
+    r"ignore\s+what\s+",
+    r"ignore\s+my\s+",
 ]
 
 def check_injection_patterns(text: str) -> tuple[bool, str]:

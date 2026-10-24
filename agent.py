@@ -5,6 +5,7 @@ from memory import save_conversation, get_conversation_history, get_user_profile
 from security import scan_input
 from config import GROQ_API_KEY, MODEL_NAME
 from pii_detector import scan_for_pii
+from audit_logger import log_conversation, log_security_threat, log_pii_detection
 
 llm = ChatGroq(api_key=GROQ_API_KEY, model_name=MODEL_NAME)
 
@@ -94,6 +95,7 @@ if __name__ == "__main__":
             print("🚨 SecureLayer: Suspicious input blocked.")
             for threat in security_result["threats"]:
                 print(f"   Reason: {threat['reason']}")
+                log_security_threat(user_id, org_id, threat["type"], threat["reason"])
             continue
         
         # Load history
@@ -113,8 +115,10 @@ if __name__ == "__main__":
 
         if pii_result["contains_pii"]:
             print(f"⚠️  PII detected and masked: {pii_result['pii_types_found']}")
+            log_pii_detection(user_id, org_id, pii_result["pii_types_found"])
 
         save_conversation(user_id, org_id, "user", safe_input)
         save_conversation(user_id, org_id, "assistant", response)
+        log_conversation(user_id, org_id, safe_input, len(response))
 
         print(f"Agent: {response}")
