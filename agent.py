@@ -86,6 +86,8 @@ tools = [create_support_ticket, search_knowledge_base, get_department_contact, g
 
 from langgraph.prebuilt import create_react_agent
 
+from memory import save_conversation, get_conversation_history, get_user_profile
+
 if __name__ == "__main__":
     print("OrgMind Agent running...")
     
@@ -94,13 +96,35 @@ if __name__ == "__main__":
     org_id = input("Org ID: ")
     user_id = input("User ID: ")
     
+    # Load user profile
+    profile = get_user_profile(user_id, org_id)
+    profile_context = ""
+    if profile:
+        profile_context = f"User profile: {profile}\n"
+    
     while True:
         user_input = input("You: ")
         if user_input.lower() == "quit":
             break
-            
-        result = agent.invoke({
-            "messages": [("user", f"User {user_id} from org {org_id} says: {user_input}")]
-        })
         
-        print(f"Agent: {result['messages'][-1].content}")
+        # Load conversation history
+        history = get_conversation_history(user_id, org_id, limit=6)
+        
+        # Build messages with history
+        messages = []
+
+        # Add history as context in system message
+        if history:
+            history_text = "\n".join([f"{msg['role']}: {msg['content']}" for msg in history])
+            messages.append(("system", f"Previous conversation history:\n{history_text}\n\nUse this history to answer questions about the user."))
+
+        messages.append(("user", f"User {user_id} from org {org_id} says: {user_input}"))
+        
+        result = agent.invoke({"messages": messages})
+        response = result['messages'][-1].content
+        
+        # Save to memory
+        save_conversation(user_id, org_id, "user", user_input)
+        save_conversation(user_id, org_id, "assistant", response)
+        
+        print(f"Agent: {response}")
