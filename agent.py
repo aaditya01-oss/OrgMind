@@ -6,6 +6,7 @@ from security import scan_input
 from config import GROQ_API_KEY, MODEL_NAME
 from pii_detector import scan_for_pii
 from audit_logger import log_conversation, log_security_threat, log_pii_detection
+from monitoring import track_conversation, track_security_event
 
 llm = ChatGroq(api_key=GROQ_API_KEY, model_name=MODEL_NAME)
 
@@ -96,6 +97,7 @@ if __name__ == "__main__":
             for threat in security_result["threats"]:
                 print(f"   Reason: {threat['reason']}")
                 log_security_threat(user_id, org_id, threat["type"], threat["reason"])
+                track_security_event(user_id, org_id, threat["type"], threat["reason"])
             continue
         
         # Load history
@@ -109,6 +111,9 @@ if __name__ == "__main__":
         
         result = agent.invoke({"messages": messages})
         response = result['messages'][-1].content
+
+        # Track in Langfuse
+        track_conversation(user_id, org_id, user_input, response, MODEL_NAME)
 
         pii_result = scan_for_pii(user_input)
         safe_input = pii_result["masked_text"] if pii_result["contains_pii"] else user_input
