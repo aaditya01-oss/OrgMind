@@ -4,6 +4,7 @@ from langgraph.prebuilt import create_react_agent
 from memory import save_conversation, get_conversation_history, get_user_profile
 from security import scan_input
 from config import GROQ_API_KEY, MODEL_NAME
+from pii_detector import scan_for_pii
 
 llm = ChatGroq(api_key=GROQ_API_KEY, model_name=MODEL_NAME)
 
@@ -106,8 +107,14 @@ if __name__ == "__main__":
         
         result = agent.invoke({"messages": messages})
         response = result['messages'][-1].content
-        
-        save_conversation(user_id, org_id, "user", user_input)
+
+        pii_result = scan_for_pii(user_input)
+        safe_input = pii_result["masked_text"] if pii_result["contains_pii"] else user_input
+
+        if pii_result["contains_pii"]:
+            print(f"⚠️  PII detected and masked: {pii_result['pii_types_found']}")
+
+        save_conversation(user_id, org_id, "user", safe_input)
         save_conversation(user_id, org_id, "assistant", response)
-        
+
         print(f"Agent: {response}")
