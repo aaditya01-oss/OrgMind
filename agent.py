@@ -78,9 +78,10 @@ tools = [
     translate_to_nepali
 ]
 
+agent = create_react_agent(llm, tools)
+
 if __name__ == "__main__":
     print("OrgMind Agent running...")
-    agent = create_react_agent(llm, tools)
     
     org_id = input("Org ID: ")
     user_id = input("User ID: ")
