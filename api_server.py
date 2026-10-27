@@ -9,6 +9,11 @@ from audit_logger import log_conversation, log_security_threat, log_pii_detectio
 from monitoring import track_conversation
 from config import MODEL_NAME
 import uvicorn
+from fastapi import UploadFile, File, Form
+import tempfile
+import os
+from document_processor import process_pdf
+
 
 app = FastAPI(title="OrgMind AI Engine", version="1.0.0")
 
@@ -40,6 +45,30 @@ def root():
 @app.get("/health")
 def health():
     return {"status": "healthy", "service": "OrgMind Python Agent"}
+
+
+@app.post("/documents/train")
+async def train_document(
+    file: UploadFile = File(...),
+    org_id: str = Form(...),
+    doc_name: str = Form(...)
+):
+    with tempfile.NamedTemporaryFile(delete=False, suffix=f"_{file.filename}") as tmp:
+        content = await file.read()
+        tmp.write(content)
+        tmp_path = tmp.name
+    
+    try:
+        process_pdf(tmp_path, org_id, doc_name)
+        return {
+            "message": f"Document '{doc_name}' successfully added to OrgMind knowledge base.",
+            "chunks_processed": True,
+            "org_id": org_id
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        os.unlink(tmp_path)
 
 @app.post("/agent/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest):
