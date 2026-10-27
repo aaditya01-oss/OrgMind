@@ -1,7 +1,7 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from agent import agent, tools
+from multi_agent import app as multi_agent_app
 from security import scan_input
 from pii_detector import scan_for_pii
 from memory import save_conversation, get_conversation_history
@@ -49,19 +49,19 @@ async def chat(request: ChatRequest):
     if not security_result["is_safe"]:
         for threat in security_result["threats"]:
             log_security_threat(
-                request.user_id, 
+                request.user_id,
                 request.org_id,
-                threat["type"], 
+                threat["type"],
                 threat["reason"]
             )
         return ChatResponse(
-            response="🚨 Your request was blocked by OrgMind SecureLayer. Suspicious input detected.",
+            response="🚨 Your request was blocked by OrgMind SecureLayer.",
             user_id=request.user_id,
             org_id=request.org_id,
             security_blocked=True
         )
     
-    # Load conversation history
+    # Load history
     history = get_conversation_history(request.user_id, request.org_id, limit=6)
     messages = []
     if history:
@@ -70,8 +70,14 @@ async def chat(request: ChatRequest):
     
     messages.append(("user", f"User {request.user_id} from org {request.org_id} says: {request.user_message}"))
     
-    # Run agent
-    result = agent.invoke({"messages": messages})
+    # Run through ORCHESTRATOR
+    result = multi_agent_app.invoke({
+        "messages": messages,
+        "org_id": request.org_id,
+        "user_id": request.user_id,
+        "route": ""
+    })
+    
     response = result['messages'][-1].content
     
     # PII detection
@@ -81,7 +87,6 @@ async def chat(request: ChatRequest):
     if pii_result["contains_pii"]:
         log_pii_detection(request.user_id, request.org_id, pii_result["pii_types_found"])
     
-    # Save to memory and audit
     save_conversation(request.user_id, request.org_id, "user", safe_input)
     save_conversation(request.user_id, request.org_id, "assistant", response)
     log_conversation(request.user_id, request.org_id, safe_input, len(response))
