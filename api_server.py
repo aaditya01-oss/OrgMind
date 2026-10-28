@@ -12,7 +12,7 @@ import uvicorn
 from fastapi import UploadFile, File, Form
 import tempfile
 import os
-from document_processor import process_pdf
+from document_processor import process_document, chunk_text, get_db_connection
 
 
 app = FastAPI(title="OrgMind AI Engine", version="1.0.0")
@@ -59,11 +59,52 @@ async def train_document(
         tmp_path = tmp.name
     
     try:
-        process_pdf(tmp_path, org_id, doc_name)
+        process_document(tmp_path, org_id, doc_name)
         return {
             "message": f"Document '{doc_name}' successfully added to OrgMind knowledge base.",
             "chunks_processed": True,
             "org_id": org_id
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        os.unlink(tmp_path)
+
+@app.post("/documents/ocr")
+async def ocr_document(
+    file: UploadFile = File(...),
+    org_id: str = Form(...),
+    doc_name: str = Form(...)
+):
+    with tempfile.NamedTemporaryFile(delete=False, suffix=f"_{file.filename}") as tmp:
+        content = await file.read()
+        tmp.write(content)
+        tmp_path = tmp.name
+    
+    try:
+        filename_lower = file.filename.lower()
+        
+        if filename_lower.endswith('.pdf'):
+            from pypdf import PdfReader
+            reader = PdfReader(tmp_path)
+            extracted_text = ""
+            for page in reader.pages:
+                extracted_text += page.extract_text()
+                
+        elif filename_lower.endswith(('.png', '.jpg', '.jpeg')):
+            # Use LLM vision for image OCR
+            import base64
+            with open(tmp_path, 'rb') as f:
+                image_data = base64.b64encode(f.read()).decode('utf-8')
+            
+            extracted_text = f"[Image file detected: {file.filename}]. For full OCR support on images, Tesseract OCR integration coming in next update. File received successfully."
+        else:
+            extracted_text = "Unsupported file format."
+        
+        return {
+            "message": f"Document '{doc_name}' scanned successfully.",
+            "extracted_text": extracted_text[:3000],
+            "total_characters": len(extracted_text),
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

@@ -25,12 +25,26 @@ def chunk_text(text, chunk_size=500, overlap=50):
     
     return chunks
 
-def process_pdf(pdf_path, org_id, doc_name):
-    reader = PdfReader(pdf_path)
-    full_text = ""
+def process_document(file_path, org_id, doc_name):
+    extension = file_path.lower().split('.')[-1]
     
-    for page in reader.pages:
-        full_text += page.extract_text()
+    if extension == 'pdf':
+        from pypdf import PdfReader
+        reader = PdfReader(file_path)
+        full_text = ""
+        for page in reader.pages:
+            full_text += page.extract_text()
+            
+    elif extension == 'docx':
+        from docx import Document
+        doc = Document(file_path)
+        full_text = "\n".join([para.text for para in doc.paragraphs])
+        
+    elif extension == 'txt':
+        with open(file_path, 'r', encoding='utf-8') as f:
+            full_text = f.read()
+    else:
+        raise ValueError(f"Unsupported format: {extension}")
     
     chunks = chunk_text(full_text)
     
@@ -55,4 +69,4 @@ if __name__ == "__main__":
     pdf_path = input("Enter PDF path: ")
     org_id = input("Enter organization ID: ")
     doc_name = input("Enter document name: ")
-    process_pdf(pdf_path, org_id, doc_name)
+    process_document(pdf_path, org_id, doc_name)
