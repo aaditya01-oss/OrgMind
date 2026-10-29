@@ -14,6 +14,8 @@ from document_processor import process_document, chunk_text, get_db_connection
 import logging
 import secrets
 from config import MODEL_NAME, INTERNAL_API_KEY
+from fastapi.concurrency import run_in_threadpool
+
 
 app = FastAPI(title="OrgMind AI Engine", version="1.0.0")
 
@@ -69,7 +71,7 @@ async def train_document(
 ):
     tmp_path = await save_upload(file, ALLOWED_TRAIN)
     try:
-        process_document(tmp_path, org_id, doc_name)
+        await run_in_threadpool(process_document, tmp_path, org_id, doc_name)
         return {
             "message": f"Document '{doc_name}' successfully added to OrgMind knowledge base.",
             "chunks_processed": True,
@@ -109,10 +111,10 @@ async def ocr_document(
 
 
 @app.post("/agent/chat", response_model=ChatResponse, dependencies=[Depends(require_internal_key)])
-async def chat(request: ChatRequest):
+def chat(request: ChatRequest):
     
     # SecureLayer check
-    security_result = scan_input(request.user_message)
+    security_result = scan_input(request.user_message, use_llm_detection=True)
     if not security_result["is_safe"]:
         for threat in security_result["threats"]:
             log_security_threat(
