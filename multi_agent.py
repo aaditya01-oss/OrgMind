@@ -20,48 +20,54 @@ def get_ticket_status(ticket_id: str) -> str:
     return f"Ticket {ticket_id}: Status=In Progress, ETA=2 hours"
 
 # DOCMIND AGENT TOOLS
-@tool
-def search_documents(query: str, org_id: str) -> str:
-    """Searches organization documents for information."""
-    from search import semantic_search
-    results = semantic_search(query, org_id, top_k=2)
-    if not results:
-        return "No relevant documents found."
-    context = ""
-    for content, doc_name, similarity in results:
-        if similarity > 0.3:
-            context += f"From {doc_name}: {content[:300]}\n"
-    return context if context else "No highly relevant information found."
+# Built per request: org_id is fixed by the server, so the model cannot choose it.
+def make_docmind_tools(org_id: str):
 
-@tool
-def list_documents(org_id: str) -> str:
-    """Lists all documents available in the organization knowledge base."""
-    import psycopg2
-    from config import DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASSWORD
-    
-    conn = psycopg2.connect(
-        host=DB_HOST, port=DB_PORT,
-        dbname=DB_NAME, user=DB_USER,
-        password=DB_PASSWORD
-    )
-    cur = conn.cursor()
-    cur.execute("""
-        SELECT DISTINCT doc_name FROM document_chunks
-        WHERE org_id = %s
-    """, (org_id,))
-    rows = cur.fetchall()
-    cur.close()
-    conn.close()
-    
-    if not rows:
-        return f"No documents found for organization {org_id}"
-    
-    doc_names = [row[0] for row in rows]
-    return f"Documents available for org {org_id}: {', '.join(doc_names)}"
+    @tool
+    def search_documents(query: str) -> str:
+        """Searches this organization's documents for information. Use specific keywords from the user's question."""
+        from search import semantic_search
+        results = semantic_search(query, org_id, top_k=3)
+        if not results:
+            return "No relevant documents found."
+        context = ""
+        for content, doc_name, similarity in results:
+            if similarity > 0.3:
+                context += f"[Source: {doc_name}]\n{content[:1500]}\n\n"
+        return context if context else "No highly relevant information found."
+
+    @tool
+    def list_documents() -> str:
+        """Lists all documents available in this organization's knowledge base."""
+        import psycopg2
+        from config import DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASSWORD
+
+        conn = psycopg2.connect(
+            host=DB_HOST, port=DB_PORT,
+            dbname=DB_NAME, user=DB_USER,
+            password=DB_PASSWORD
+        )
+        try:
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT DISTINCT doc_name FROM document_chunks WHERE org_id = %s ORDER BY doc_name",
+                (org_id,)
+            )
+            rows = cur.fetchall()
+            cur.close()
+        finally:
+            conn.close()
+
+        if not rows:
+            return "No documents found for this organization."
+        return "Documents available: " + ", ".join(row[0] for row in rows)
+
+    return [search_documents, list_documents]
+
+
 
 # CREATE SPECIALIZED AGENTS
 support_agent = create_react_agent(llm, [create_ticket, get_ticket_status])
-docmind_agent = create_react_agent(llm, [search_documents, list_documents])
 
 # STATE
 class OrgMindState(TypedDict):
@@ -97,6 +103,7 @@ def run_support_agent(state: OrgMindState):
     return {"messages": result["messages"]}
 
 def run_docmind_agent(state: OrgMindState):
+    docmind_agent = create_react_agent(llm, make_docmind_tools(state["org_id"]))
     result = docmind_agent.invoke({"messages": state["messages"]})
     return {"messages": result["messages"]}
 
