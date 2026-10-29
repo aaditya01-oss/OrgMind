@@ -5,6 +5,7 @@ from langgraph.graph import StateGraph, END
 from typing import TypedDict, Annotated
 import operator
 from config import GROQ_API_KEY, MODEL_NAME
+from pii_detector import pseudonymize
 
 llm = ChatGroq(api_key=GROQ_API_KEY, model_name=MODEL_NAME)
 
@@ -21,7 +22,7 @@ def get_ticket_status(ticket_id: str) -> str:
 
 # DOCMIND AGENT TOOLS
 # Built per request: org_id is fixed by the server, so the model cannot choose it.
-def make_docmind_tools(org_id: str):
+def make_docmind_tools(org_id: str, pii_mapping: dict):
 
     @tool
     def search_documents(query: str) -> str:
@@ -33,7 +34,8 @@ def make_docmind_tools(org_id: str):
         context = ""
         for content, doc_name, similarity in results:
             if similarity > 0.3:
-                context += f"[Source: {doc_name}]\n{content[:1500]}\n\n"
+                safe_chunk, _ = pseudonymize(content[:1500], pii_mapping)
+                context += f"[Source: {doc_name}]\n{safe_chunk}\n\n"
         return context if context else "No highly relevant information found."
 
     @tool
@@ -75,6 +77,7 @@ class OrgMindState(TypedDict):
     org_id: str
     user_id: str
     route: str
+    pii_mapping: dict
 
 # ORCHESTRATOR
 def orchestrator(state: OrgMindState):
@@ -103,7 +106,8 @@ def run_support_agent(state: OrgMindState):
     return {"messages": result["messages"]}
 
 def run_docmind_agent(state: OrgMindState):
-    docmind_agent = create_react_agent(llm, make_docmind_tools(state["org_id"]))
+    """Run the document mind agent."""
+    docmind_agent = create_react_agent(llm, make_docmind_tools(state["org_id"], state["pii_mapping"]))
     result = docmind_agent.invoke({"messages": state["messages"]})
     return {"messages": result["messages"]}
 
@@ -148,7 +152,8 @@ if __name__ == "__main__":
             "messages": [("user", user_input)],
             "org_id": org_id,
             "user_id": user_id,
-            "route": ""
+            "route": "",
+            "pii_mapping": {}
         })
         
         print(f"Agent: {result['messages'][-1].content}")
