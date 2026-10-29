@@ -35,8 +35,29 @@ def search_documents(query: str, org_id: str) -> str:
 
 @tool
 def list_documents(org_id: str) -> str:
-    """Lists all documents available in the organization."""
-    return f"Documents for org {org_id}: HR Policy.pdf, IT Guidelines.pdf, Engineering Economics.pdf"
+    """Lists all documents available in the organization knowledge base."""
+    import psycopg2
+    from config import DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASSWORD
+    
+    conn = psycopg2.connect(
+        host=DB_HOST, port=DB_PORT,
+        dbname=DB_NAME, user=DB_USER,
+        password=DB_PASSWORD
+    )
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT DISTINCT doc_name FROM document_chunks
+        WHERE org_id = %s
+    """, (org_id,))
+    rows = cur.fetchall()
+    cur.close()
+    conn.close()
+    
+    if not rows:
+        return f"No documents found for organization {org_id}"
+    
+    doc_names = [row[0] for row in rows]
+    return f"Documents available for org {org_id}: {', '.join(doc_names)}"
 
 # CREATE SPECIALIZED AGENTS
 support_agent = create_react_agent(llm, [create_ticket, get_ticket_status])

@@ -1,5 +1,4 @@
 from fastapi import FastAPI, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from multi_agent import app as multi_agent_app
 from security import scan_input
@@ -7,23 +6,38 @@ from pii_detector import scan_for_pii
 from memory import save_conversation, get_conversation_history
 from audit_logger import log_conversation, log_security_threat, log_pii_detection
 from monitoring import track_conversation
-from config import MODEL_NAME
 import uvicorn
-from fastapi import UploadFile, File, Form
+from fastapi import UploadFile, File, Form, Depends, Header
 import tempfile
 import os
 from document_processor import process_document, chunk_text, get_db_connection
-
+import logging
+import secrets
+from config import MODEL_NAME, INTERNAL_API_KEY
 
 app = FastAPI(title="OrgMind AI Engine", version="1.0.0")
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://localhost:5147"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+if not INTERNAL_API_KEY or len(INTERNAL_API_KEY) < 32:
+    raise RuntimeError("INTERNAL_API_KEY must be set in .env (32+ characters)")
+
+def require_internal_key(x_internal_key: str = Header(default="")):
+    if not secrets.compare_digest(x_internal_key.encode(), INTERNAL_API_KEY.encode()):
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+ALLOWED_TRAIN = {".pdf", ".docx", ".txt"}
+ALLOWED_OCR = {".pdf", ".png", ".jpg", ".jpeg"}
+MAX_UPLOAD_BYTES = 20 * 1024 * 1024
+
+async def save_upload(file: UploadFile, allowed: set) -> str:
+    ext = os.path.splitext(file.filename or "")[1].lower()
+    if ext not in allowed:
+        raise HTTPException(status_code=400, detail=f"Unsupported file type. Allowed: {', '.join(sorted(allowed))}")
+    content = await file.read(MAX_UPLOAD_BYTES + 1)
+    if len(content) > MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail="File too large (max 20 MB)")
+    with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp:
+        tmp.write(content)
+        return tmp.name
 
 class ChatRequest(BaseModel):
     user_message: str
@@ -47,17 +61,13 @@ def health():
     return {"status": "healthy", "service": "OrgMind Python Agent"}
 
 
-@app.post("/documents/train")
+@app.post("/documents/train", dependencies=[Depends(require_internal_key)])
 async def train_document(
     file: UploadFile = File(...),
     org_id: str = Form(...),
     doc_name: str = Form(...)
 ):
-    with tempfile.NamedTemporaryFile(delete=False, suffix=f"_{file.filename}") as tmp:
-        content = await file.read()
-        tmp.write(content)
-        tmp_path = tmp.name
-    
+    tmp_path = await save_upload(file, ALLOWED_TRAIN)
     try:
         process_document(tmp_path, org_id, doc_name)
         return {
@@ -65,53 +75,40 @@ async def train_document(
             "chunks_processed": True,
             "org_id": org_id
         }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception:
+        logging.exception("Document training failed")
+        raise HTTPException(status_code=500, detail="Document processing failed")
     finally:
         os.unlink(tmp_path)
 
-@app.post("/documents/ocr")
+@app.post("/documents/ocr", dependencies=[Depends(require_internal_key)])
 async def ocr_document(
     file: UploadFile = File(...),
     org_id: str = Form(...),
     doc_name: str = Form(...)
 ):
-    with tempfile.NamedTemporaryFile(delete=False, suffix=f"_{file.filename}") as tmp:
-        content = await file.read()
-        tmp.write(content)
-        tmp_path = tmp.name
-    
+    tmp_path = await save_upload(file, ALLOWED_OCR)
     try:
-        filename_lower = file.filename.lower()
-        
-        if filename_lower.endswith('.pdf'):
+        if tmp_path.lower().endswith('.pdf'):
             from pypdf import PdfReader
             reader = PdfReader(tmp_path)
-            extracted_text = ""
-            for page in reader.pages:
-                extracted_text += page.extract_text()
-                
-        elif filename_lower.endswith(('.png', '.jpg', '.jpeg')):
-            # Use LLM vision for image OCR
-            import base64
-            with open(tmp_path, 'rb') as f:
-                image_data = base64.b64encode(f.read()).decode('utf-8')
-            
-            extracted_text = f"[Image file detected: {file.filename}]. For full OCR support on images, Tesseract OCR integration coming in next update. File received successfully."
+            extracted_text = "".join((page.extract_text() or "") for page in reader.pages)
         else:
-            extracted_text = "Unsupported file format."
-        
+            extracted_text = "Image OCR is not available yet."
         return {
             "message": f"Document '{doc_name}' scanned successfully.",
             "extracted_text": extracted_text[:3000],
             "total_characters": len(extracted_text),
         }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception:
+        logging.exception("OCR failed")
+        raise HTTPException(status_code=500, detail="Document scan failed")
     finally:
         os.unlink(tmp_path)
+        logging.info(f"Temporary file {tmp_path} removed.")
 
-@app.post("/agent/chat", response_model=ChatResponse)
+
+@app.post("/agent/chat", response_model=ChatResponse, dependencies=[Depends(require_internal_key)])
 async def chat(request: ChatRequest):
     
     # SecureLayer check
@@ -170,4 +167,4 @@ async def chat(request: ChatRequest):
     )
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="127.0.0.1", port=8000)
