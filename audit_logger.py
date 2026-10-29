@@ -1,6 +1,13 @@
+import json
+import logging
+from contextlib import closing
+from datetime import datetime, timezone
+
 import psycopg2
-from datetime import datetime
 from config import DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASSWORD
+
+logger = logging.getLogger("orgmind.audit")
+
 
 def get_db_connection():
     return psycopg2.connect(
@@ -11,6 +18,7 @@ def get_db_connection():
         password=DB_PASSWORD
     )
 
+
 def log_event(
     event_type: str,
     user_id: str,
@@ -18,26 +26,36 @@ def log_event(
     details: dict,
     severity: str = "INFO"
 ):
-    conn = get_db_connection()
-    cur = conn.cursor()
-    
-    import json
-    cur.execute("""
-        INSERT INTO audit_logs 
-        (event_type, user_id, org_id, details, severity, timestamp)
-        VALUES (%s, %s, %s, %s, %s, %s)
-    """, (
-        event_type,
-        user_id,
-        org_id,
-        json.dumps(details),
-        severity,
-        datetime.utcnow()
-    ))
-    
-    conn.commit()
-    cur.close()
-    conn.close()
+    """Write one audit row. Never raises: an audit failure must not break the request,
+    but it is logged loudly so you notice."""
+    try:
+        with closing(get_db_connection()) as conn:
+            with conn:  # commits on success, rolls back on error
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        INSERT INTO audit_logs
+                        (event_type, user_id, org_id, details, severity, timestamp)
+                        VALUES (%s, %s, %s, %s, %s, %s)
+                    """, (
+                        event_type,
+                        user_id,
+                        org_id,
+                        json.dumps(details),
+                        severity,
+                        datetime.now(timezone.utc).replace(tzinfo=None)  # naive UTC, same as before
+                    ))
+    except Exception:
+        logger.exception("AUDIT WRITE FAILED: %s user=%s org=%s", event_type, user_id, org_id)
+
+
+def log_document_event(user_id: str, org_id: str, action: str, doc_name: str, status: str):
+    log_event(
+        event_type=f"DOCUMENT_{action.upper()}",
+        user_id=user_id,
+        org_id=org_id,
+        details={"doc_name": doc_name, "status": status},
+        severity="INFO" if status == "success" else "WARNING"
+    )
 
 def log_conversation(user_id: str, org_id: str, user_input: str, response_length: int):
     log_event(

@@ -4,7 +4,7 @@ from multi_agent import app as multi_agent_app
 from security import scan_input
 from pii_detector import scan_for_pii, pseudonymize, restore_pii, mask_pii
 from memory import save_conversation, get_conversation_history
-from audit_logger import log_conversation, log_security_threat, log_pii_detection
+from audit_logger import log_conversation, log_security_threat, log_pii_detection, log_document_event
 from monitoring import track_conversation
 import uvicorn
 from fastapi import UploadFile, File, Form, Depends, Header
@@ -67,11 +67,13 @@ def health():
 async def train_document(
     file: UploadFile = File(...),
     org_id: str = Form(...),
-    doc_name: str = Form(...)
+    doc_name: str = Form(...),
+    user_id: str = Form("unknown")
 ):
     tmp_path = await save_upload(file, ALLOWED_TRAIN)
     try:
         await run_in_threadpool(process_document, tmp_path, org_id, doc_name)
+        await run_in_threadpool(log_document_event, user_id, org_id, "uploaded", doc_name, "success")
         return {
             "message": f"Document '{doc_name}' successfully added to OrgMind knowledge base.",
             "chunks_processed": True,
@@ -79,24 +81,32 @@ async def train_document(
         }
     except Exception:
         logging.exception("Document training failed")
+        await run_in_threadpool(log_document_event, user_id, org_id, "uploaded", doc_name, "failed")
         raise HTTPException(status_code=500, detail="Document processing failed")
     finally:
         os.unlink(tmp_path)
+
+def extract_pdf_text(path: str) -> str:
+    from pypdf import PdfReader
+    reader = PdfReader(path)
+    return "".join((page.extract_text() or "") for page in reader.pages)
+
 
 @app.post("/documents/ocr", dependencies=[Depends(require_internal_key)])
 async def ocr_document(
     file: UploadFile = File(...),
     org_id: str = Form(...),
-    doc_name: str = Form(...)
+    doc_name: str = Form(...),
+    user_id: str = Form("unknown")
 ):
     tmp_path = await save_upload(file, ALLOWED_OCR)
     try:
         if tmp_path.lower().endswith('.pdf'):
-            from pypdf import PdfReader
-            reader = PdfReader(tmp_path)
-            extracted_text = "".join((page.extract_text() or "") for page in reader.pages)
+            extracted_text = await run_in_threadpool(extract_pdf_text, tmp_path)
         else:
             extracted_text = "Image OCR is not available yet."
+
+        await run_in_threadpool(log_document_event, user_id, org_id, "scanned", doc_name, "success")
         return {
             "message": f"Document '{doc_name}' scanned successfully.",
             "extracted_text": extracted_text[:3000],
@@ -104,10 +114,10 @@ async def ocr_document(
         }
     except Exception:
         logging.exception("OCR failed")
+        await run_in_threadpool(log_document_event, user_id, org_id, "scanned", doc_name, "failed")
         raise HTTPException(status_code=500, detail="Document scan failed")
     finally:
         os.unlink(tmp_path)
-        logging.info(f"Temporary file {tmp_path} removed.")
 
 PLACEHOLDER_NOTE = (
     "Some private values in this conversation are replaced by placeholders such as [PHONE_1] or [EMAIL_1]. "
