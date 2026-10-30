@@ -1,5 +1,6 @@
 from contextlib import closing
-
+import os
+import unicodedata
 import psycopg2
 from embeddings import get_embedding
 from config import DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASSWORD
@@ -8,6 +9,23 @@ from config import DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASSWORD
 class DocumentError(ValueError):
     """A problem with the uploaded document whose message is safe to show to the user."""
 
+def clean_doc_name(raw: str, max_len: int = 120) -> str:
+    """Make an uploaded file name safe and tidy for display and storage."""
+    name = unicodedata.normalize("NFC", raw or "")
+    name = "".join(ch for ch in name if unicodedata.category(ch)[0] != "C")  # control characters
+    name = name.replace("\\", "/").rsplit("/", 1)[-1]                         # file name only, no paths
+    name = " ".join(name.split())                                             # tidy spaces
+    i = 0
+    while i < len(name) and not name[i].isalnum():                            # drop leading junk like "### "
+        i += 1
+    name = name[i:]
+    stem, ext = os.path.splitext(name)
+    if len(name) > max_len:
+        stem = stem[: max_len - len(ext)].rstrip()
+        name = stem + ext
+    if not name or not stem:
+        raise DocumentError("This file name is not valid. Please rename the file and try again.")
+    return name
 
 def get_db_connection():
     return psycopg2.connect(

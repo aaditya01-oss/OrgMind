@@ -10,7 +10,7 @@ import uvicorn
 from fastapi import UploadFile, File, Form, Depends, Header
 import tempfile
 import os
-from document_processor import process_document, DocumentError
+from document_processor import process_document, DocumentError,clean_doc_name
 import logging
 import secrets
 from config import MODEL_NAME, INTERNAL_API_KEY
@@ -72,6 +72,7 @@ async def train_document(
 ):
     tmp_path = await save_upload(file, ALLOWED_TRAIN)
     try:
+        doc_name = clean_doc_name(doc_name)
         chunks = await run_in_threadpool(process_document, tmp_path, org_id, doc_name)
         await run_in_threadpool(log_document_event, user_id, org_id, "uploaded", doc_name, "success")
         return {
