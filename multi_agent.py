@@ -28,7 +28,7 @@ def make_docmind_tools(org_id: str, pii_mapping: dict):
     def search_documents(query: str) -> str:
         """Searches this organization's documents for information. Use specific keywords from the user's question."""
         from search import semantic_search
-        results = semantic_search(query, org_id, top_k=3)
+        results = semantic_search(query, org_id, top_k=5)
         if not results:
             return "No relevant documents found."
         context = ""

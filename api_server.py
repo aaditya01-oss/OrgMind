@@ -10,7 +10,7 @@ import uvicorn
 from fastapi import UploadFile, File, Form, Depends, Header
 import tempfile
 import os
-from document_processor import process_document, chunk_text, get_db_connection
+from document_processor import process_document, DocumentError
 import logging
 import secrets
 from config import MODEL_NAME, INTERNAL_API_KEY
@@ -72,13 +72,17 @@ async def train_document(
 ):
     tmp_path = await save_upload(file, ALLOWED_TRAIN)
     try:
-        await run_in_threadpool(process_document, tmp_path, org_id, doc_name)
+        chunks = await run_in_threadpool(process_document, tmp_path, org_id, doc_name)
         await run_in_threadpool(log_document_event, user_id, org_id, "uploaded", doc_name, "success")
         return {
             "message": f"Document '{doc_name}' successfully added to OrgMind knowledge base.",
-            "chunks_processed": True,
+            "chunks_processed": chunks,
             "org_id": org_id
         }
+    except DocumentError as e:
+        # The file itself is the problem, and the message is written for users.
+        await run_in_threadpool(log_document_event, user_id, org_id, "uploaded", doc_name, "rejected")
+        raise HTTPException(status_code=422, detail=str(e))
     except Exception:
         logging.exception("Document training failed")
         await run_in_threadpool(log_document_event, user_id, org_id, "uploaded", doc_name, "failed")
@@ -89,7 +93,7 @@ async def train_document(
 def extract_pdf_text(path: str) -> str:
     from pypdf import PdfReader
     reader = PdfReader(path)
-    return "".join((page.extract_text() or "") for page in reader.pages)
+    return "\n".join((page.extract_text() or "") for page in reader.pages)
 
 
 @app.post("/documents/ocr", dependencies=[Depends(require_internal_key)])
