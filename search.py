@@ -5,6 +5,7 @@ import psycopg2
 from embeddings import get_embedding
 from config import DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASSWORD
 
+MIN_SIMILARITY = 0.25   # chunks scoring below this are never shown to the model (chosen with docmind_eval.py)
 
 def get_db_connection():
     return psycopg2.connect(
@@ -83,7 +84,38 @@ def find_documents(names, hint):
     if exact:
         return exact
     return [n for n in names if h in _squash(n)]
+def pick_indices(total, n):
+    """n chunk positions spread evenly over 0..total-1, always including the first and last."""
+    if total <= 0 or n <= 0:
+        return []
+    if total <= n:
+        return list(range(total))
+    if n == 1:
+        return [0]
+    return sorted({round(i * (total - 1) / (n - 1)) for i in range(n)})
 
+
+def get_document_sample(org_id, doc_name, n=8):
+    """Chunks spread across the WHOLE document, in reading order.
+    Returns (list_of_text, total_number_of_chunks)."""
+    with closing(get_db_connection()) as conn, conn.cursor() as cur:
+        cur.execute(
+            "SELECT count(*) FROM document_chunks WHERE org_id = %s AND doc_name = %s",
+            (org_id, doc_name),
+        )
+        total = cur.fetchone()[0]
+        wanted = pick_indices(total, n)
+        if not wanted:
+            return [], 0
+        cur.execute(
+            """
+            SELECT content FROM document_chunks
+            WHERE org_id = %s AND doc_name = %s AND chunk_index = ANY(%s)
+            ORDER BY chunk_index
+            """,
+            (org_id, doc_name, wanted),
+        )
+        return [row[0] for row in cur.fetchall()], total
 
 if __name__ == "__main__":
     query = input("Search: ")

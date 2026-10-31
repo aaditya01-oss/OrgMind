@@ -47,7 +47,7 @@ def make_docmind_tools(org_id: str, pii_mapping: dict, sources: list):
     def search_documents(query: str, doc_name: str = "") -> str:
         """Searches this organization's documents. Use specific keywords from the question.
         Optionally pass doc_name (a loose name like 'SRS') to search only inside that document."""
-        from search import semantic_search, list_document_names, find_documents
+        from search import semantic_search, list_document_names, find_documents, MIN_SIMILARITY
 
         exact_name = None
         if doc_name.strip():
@@ -61,7 +61,7 @@ def make_docmind_tools(org_id: str, pii_mapping: dict, sources: list):
         results = semantic_search(query, org_id, top_k=5, doc_name=exact_name)
         context = ""
         for content, found_name, similarity in results:
-            if similarity > 0.3:
+            if similarity > MIN_SIMILARITY:
                 safe_chunk, _ = pseudonymize(content[:1500], pii_mapping)
                 context += f"[Source: {found_name}]\n{safe_chunk}\n\n"
                 if found_name not in sources:
@@ -79,9 +79,9 @@ def make_docmind_tools(org_id: str, pii_mapping: dict, sources: list):
 
     @tool
     def get_document_overview(doc_name: str) -> str:
-        """Returns the beginning of one document so it can be summarized.
-        doc_name can be a loose name such as 'SRS' or 'enterprise'."""
-        from search import list_document_names, find_documents, get_document_start
+        """Returns excerpts taken evenly from the beginning to the end of ONE document so it can be
+        summarized. doc_name can be a loose name such as 'SRS' or 'enterprise'."""
+        from search import list_document_names, find_documents, get_document_sample
 
         matches = find_documents(list_document_names(org_id), doc_name)
         if not matches:
@@ -89,12 +89,16 @@ def make_docmind_tools(org_id: str, pii_mapping: dict, sources: list):
         if len(matches) > 1:
             return "Several documents match: " + ", ".join(matches) + ". Ask the user which one."
 
-        parts = get_document_start(org_id, matches[0], max_chunks=3)
-        text = "\n\n".join(p[:1200] for p in parts)
+        parts, total = get_document_sample(org_id, matches[0], n=8)
+        text = "\n\n---\n\n".join(p[:900] for p in parts)
         safe_text, _ = pseudonymize(text, pii_mapping)
-        return f"[Source: {matches[0]}] (beginning of the document)\n{safe_text}"
         if matches[0] not in sources:
             sources.append(matches[0])
+        return (
+            f"[Source: {matches[0]}] Excerpts taken evenly from the beginning to the end of the document "
+            f"({len(parts)} of {total} parts, in reading order). This is a sample, not the full text: "
+            f"if details may be missing, say so.\n\n{safe_text}"
+        )
 
     return [search_documents, list_documents, get_document_overview]
 
