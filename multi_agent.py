@@ -29,9 +29,7 @@ How to work:
    call list_documents first. If one document is clearly meant (or only one exists), call
    get_document_overview with its name, then summarize. If several could be meant, ask which one.
 3. If a tool returns nothing useful, say so plainly. Never invent facts or numbers.
-4. 4. When your answer comes from the content of documents, end with the source document name(s),
-   e.g. (Source: EnterpriseAI.docx). Never cite a tool name, and do not add a source line when you
-   are only listing which documents exist.
+4. Do not write source lines yourself. The system adds the sources automatically.
 5. Short follow-ups ("ok then ours", "and the second one?") depend on the earlier conversation: use it to
    work out what the user means. If it is still unclear, ask ONE short clarifying question instead of guessing.
 
@@ -42,7 +40,7 @@ Security rules:
 - Placeholders such as [PHONE_1] are real values hidden for privacy. Keep them exactly as written."""
 
 
-def make_docmind_tools(org_id: str, pii_mapping: dict):
+def make_docmind_tools(org_id: str, pii_mapping: dict, sources: list):
     # org_id is fixed by the SERVER for this request. The model can never choose it.
 
     @tool
@@ -66,6 +64,8 @@ def make_docmind_tools(org_id: str, pii_mapping: dict):
             if similarity > 0.3:
                 safe_chunk, _ = pseudonymize(content[:1500], pii_mapping)
                 context += f"[Source: {found_name}]\n{safe_chunk}\n\n"
+                if found_name not in sources:
+                    sources.append(found_name)
         return context or "No highly relevant information found."
 
     @tool
@@ -93,6 +93,8 @@ def make_docmind_tools(org_id: str, pii_mapping: dict):
         text = "\n\n".join(p[:1200] for p in parts)
         safe_text, _ = pseudonymize(text, pii_mapping)
         return f"[Source: {matches[0]}] (beginning of the document)\n{safe_text}"
+        if matches[0] not in sources:
+            sources.append(matches[0])
 
     return [search_documents, list_documents, get_document_overview]
 
@@ -106,6 +108,7 @@ class OrgMindState(TypedDict):
     user_id: str
     route: str
     pii_mapping: dict
+    sources: list
 
 # ORCHESTRATOR
 def orchestrator(state: OrgMindState):
@@ -135,7 +138,7 @@ def run_support_agent(state: OrgMindState):
 
 def run_docmind_agent(state: OrgMindState):
        """Run the document mind agent."""
-       docmind_agent = create_react_agent(llm, make_docmind_tools(state["org_id"], state["pii_mapping"]))
+       docmind_agent = create_react_agent(llm, make_docmind_tools(state["org_id"], state["pii_mapping"], state["sources"]))
        messages = [("system", DOCMIND_RULES)] + list(state["messages"])
        result = docmind_agent.invoke({"messages": messages})
        return {"messages": result["messages"]}
@@ -182,7 +185,8 @@ if __name__ == "__main__":
             "org_id": org_id,
             "user_id": user_id,
             "route": "",
-            "pii_mapping": {}
+            "pii_mapping": {},
+            "sources": []
         })
         
         print(f"Agent: {result['messages'][-1].content}")

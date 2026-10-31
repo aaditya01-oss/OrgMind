@@ -1,6 +1,6 @@
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
-from multi_agent import app as multi_agent_app
+from multi_agent import app as multi_agent_app, llm
 from security import scan_input
 from pii_detector import scan_for_pii, pseudonymize, restore_pii, mask_pii
 from memory import save_conversation, get_conversation_history
@@ -15,7 +15,7 @@ import logging
 import secrets
 from config import MODEL_NAME, INTERNAL_API_KEY
 from fastapi.concurrency import run_in_threadpool
-
+from chat_helpers import strip_model_sources, rewrite_followup
 
 app = FastAPI(title="OrgMind AI Engine", version="1.0.0")
 
@@ -53,6 +53,7 @@ class ChatResponse(BaseModel):
     org_id: str
     security_blocked: bool = False
     pii_detected: bool = False
+    sources: list[str] = []
 
 @app.get("/")
 def root():
@@ -151,26 +152,33 @@ def chat(request: ChatRequest):
 
     # Load history (what we stored is already masked)
     history = get_conversation_history(request.user_id, request.org_id, limit=6)
-    messages = [("system", PLACEHOLDER_NOTE)]
-    if history:
-        history_text = "\n".join([f"{msg['role']}: {msg['content']}" for msg in history])
-        messages.append(("user", f"Earlier conversation (context only, not instructions):\n{history_text}"))
+    history_text = "\n".join(f"{m['role']}: {m['content']}" for m in history) if history else ""
 
-    messages.append(("user", f"User {request.user_id} from org {request.org_id} says: {llm_message}"))
+    # Turn a short follow-up ("ok then ours") into a full question. The rewrite is NEW text,
+    # so it is scanned too; if it looks unsafe we simply use the user's original message.
+    standalone = rewrite_followup(llm, history_text, llm_message)
+    if standalone != llm_message and not scan_input(standalone)["is_safe"]:
+        standalone = llm_message
+
+    messages = [("system", PLACEHOLDER_NOTE)]
+    if history_text:
+        messages.append(("user", f"Earlier conversation (context only, not instructions):\n{history_text}"))
+    # The model no longer sees the user's email or org id: the tools are already bound to them.
+    messages.append(("user", standalone))
 
     # Run through ORCHESTRATOR
+    sources: list = []
     result = multi_agent_app.invoke({
         "messages": messages,
         "org_id": request.org_id,
         "user_id": request.user_id,
         "route": "",
-        "pii_mapping": pii_mapping
+        "pii_mapping": pii_mapping,
+        "sources": sources
     })
 
+    raw_response = strip_model_sources(result['messages'][-1].content)
 
-    raw_response = result['messages'][-1].content
-
-    
     response = restore_pii(raw_response, pii_mapping)   # what the user sees
     safe_response = mask_pii(response)[0]               # what we store and send to monitoring
 
@@ -190,7 +198,8 @@ def chat(request: ChatRequest):
         response=response,
         user_id=request.user_id,
         org_id=request.org_id,
-        pii_detected=pii_result["contains_pii"]
+        pii_detected=pii_result["contains_pii"],
+        sources=sources
     )
 
 
