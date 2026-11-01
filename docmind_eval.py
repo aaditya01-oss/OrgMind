@@ -50,7 +50,26 @@ CASES = [
 ]
 
 # Add new questions here AFTER you have finished tuning on CASES
+# Add new questions here AFTER you have finished tuning on CASES
 HOLDOUT = [
+]
+
+# Nepali and mixed-language questions (needs "Nepali Leave Policy.txt" uploaded)
+NEPALI = [
+    ("वार्षिक बिदा कति दिन पाइन्छ?", ["१८ दिन"], None),
+    ("बिरामी बिदा कति दिनसम्म लिन सकिन्छ?", ["१२ दिन"], None),
+    ("सुत्केरी बिदा कति दिनको हुन्छ?", ["९८ दिन"], None),
+    ("कार्यालय कति बजे खुल्छ?", ["बिहान १० बजे"], None),
+    ("कुन दिन कार्यालय बन्द हुन्छ?", ["शनिबार"], None),
+    ("बिदा लिनुअघि के गर्नुपर्छ?", ["लिखित आवेदन"], None),
+    # English question, Nepali document (cross-language)
+    ("How many days of sick leave do employees get?", ["१२ दिन"], None),
+    # Nepali question, English document (cross-language)
+    ("RAG retrieval को सटीकता कति छ?", ["91.7"], None),
+    ("पासवर्ड कति दिनमा परिवर्तन गर्नुपर्छ?", ["९० दिन"], None),
+    ("नयाँ ल्यापटप स्वीकृत हुन कति समय लाग्छ?", ["५ कार्य दिन"], None),
+    ("हेल्पडेस्क कुन दिनहरूमा खुला रहन्छ?", ["आइतबारदेखि शुक्रबार"], None),
+    ("What is the password change interval?", ["९० दिन"], None),
 ]
 
 # ---------------------------------------------------------------------------
@@ -60,6 +79,9 @@ NEGATIVE = [
     "What is the weather today?",
     "Who won the football world cup in 2018?",
     "What is the annual leave policy of the company?",
+    "आजको मौसम कस्तो छ?",
+    "नेपालको राजधानी कहाँ हो?",
+    "कम्पनीको वार्षिक नाफा कति भयो?",
 ]
 
 
@@ -131,12 +153,15 @@ def main():
     print(f"DocMind retrieval evaluation | org {org_id} | top {k} chunks | threshold {THRESHOLD}")
     main_score = run_set("MAIN SET", CASES, org_id, k, verbose)
     hold_score = run_set("HOLDOUT SET", HOLDOUT, org_id, k, verbose)
+    nep_score = run_set("NEPALI SET", NEPALI, org_id, k, verbose)
     neg_score = run_negative(org_id, k)
     print("\n=== SCORECARD")
     if main_score is not None:
         print(f"  Main set found in top {k}:    {100*main_score:.0f}%")
     if hold_score is not None:
         print(f"  Holdout found in top {k}:     {100*hold_score:.0f}%   (the honest number)")
+    if nep_score is not None:
+        print(f"  Nepali found in top {k}:      {100*nep_score:.0f}%")
     if neg_score is not None:
         print(f"  No-answer handled:          {100*neg_score:.0f}%")
 

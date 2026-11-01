@@ -2,10 +2,12 @@ import re
 from contextlib import closing
 
 import psycopg2
-from embeddings import get_embedding
+from embeddings import get_query_embedding
 from config import DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASSWORD
 
-MIN_SIMILARITY = 0.25   # chunks scoring below this are never shown to the model (chosen with docmind_eval.py)
+# MIN_SIMILARITY = 0.8   # multilingual-e5 scores sit high; 0.8 keeps all real answers and drops some junk
+MIN_SIMILARITY = 0.7   # a low floor: the model itself says "not in the documents" when chunks don't answer
+SOURCE_MARGIN = 0.025   # a document is listed as a source only if it scores within this of the best match
 
 def get_db_connection():
     return psycopg2.connect(
@@ -20,7 +22,7 @@ def get_db_connection():
 def semantic_search(query, org_id, top_k=5, doc_name=None):
     """Nearest chunks for the query, inside ONE organization.
     If doc_name is given (an EXACT stored name), only that document is searched."""
-    query_embedding = get_embedding(query)
+    query_embedding = get_query_embedding(query)
 
     with closing(get_db_connection()) as conn, conn.cursor() as cur:
         if doc_name is None:
