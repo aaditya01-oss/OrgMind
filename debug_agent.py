@@ -1,13 +1,27 @@
 from multi_agent import app
 
-for question in ["Summarize the SRS", "What documents do we have?"]:
-    r = app.invoke({"messages": [("user", question)], "org_id": "01",
-                    "user_id": "test", "route": "", "pii_mapping": {}})
-    print("\n=====", question, "| route:", r["route"])
+QUESTIONS = [
+    "How did the test users rate the system?",
+    "What are the sick leave days, and how often must passwords be changed?",
+]
+
+for question in QUESTIONS:
+    sources = []
+    print("\n=====", question)
+    try:
+        r = app.invoke({"messages": [("user", question)], "org_id": "01",
+                        "user_id": "test", "route": "", "pii_mapping": {}, "sources": sources})
+    except Exception:
+        import traceback
+        traceback.print_exc()
+        continue
     for m in r["messages"]:
         if isinstance(m, tuple):
-            print("input tuple |", m[0], "|", str(m[1])[:150])
             continue
         calls = getattr(m, "tool_calls", None)
-        print(type(m).__name__, "| tool calls:", [c["name"] for c in calls] if calls else "-",
-              "|", str(m.content)[:150].replace("\n", " "))
+        if calls:
+            for c in calls:
+                print("TOOL CALL:", c["name"], c["args"])
+        elif type(m).__name__ == "AIMessage":
+            print("ANSWER:", str(m.content)[:200].replace("\n", " "))
+    print("sources:", sources)

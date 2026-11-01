@@ -49,7 +49,7 @@ def make_docmind_tools(org_id: str, pii_mapping: dict, sources: list):
     def search_documents(query: str, doc_name: str = "") -> str:
         """Searches this organization's documents. Use specific keywords from the question.
         Optionally pass doc_name (a loose name like 'SRS') to search only inside that document."""
-        from search import semantic_search, list_document_names, find_documents, MIN_SIMILARITY, SOURCE_MARGIN
+        from search import semantic_search, list_document_names, find_documents, MIN_SIMILARITY
 
         exact_name = None
         if doc_name.strip():
@@ -65,14 +65,11 @@ def make_docmind_tools(org_id: str, pii_mapping: dict, sources: list):
         if not results:
             return "No highly relevant information found."
 
-        best = max(r[2] for r in results)
         context = ""
         for content, found_name, similarity in results:
             safe_chunk, _ = pseudonymize(content[:700], pii_mapping)
             context += f"[Source: {found_name}]\n{safe_chunk}\n\n"
-            # The model SEES all these chunks, but only close matches are shown to the user as sources.
-            if similarity >= best - SOURCE_MARGIN and found_name not in sources:
-                sources.append(found_name)
+            sources.append({"doc": found_name, "text": safe_chunk, "forced": False})
         return context
 
     @tool
@@ -99,8 +96,7 @@ def make_docmind_tools(org_id: str, pii_mapping: dict, sources: list):
         parts, total = get_document_sample(org_id, matches[0], n=8)
         text = "\n\n---\n\n".join(p[:900] for p in parts)
         safe_text, _ = pseudonymize(text, pii_mapping)
-        if matches[0] not in sources:
-            sources.append(matches[0])
+        sources.append({"doc": matches[0], "text": safe_text, "forced": True})
         return (
             f"[Source: {matches[0]}] Excerpts taken evenly from the beginning to the end of the document "
             f"({len(parts)} of {total} parts, in reading order). This is a sample, not the full text: "
