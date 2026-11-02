@@ -17,6 +17,7 @@ from config import MODEL_NAME, INTERNAL_API_KEY
 from fastapi.concurrency import run_in_threadpool
 from chat_helpers import strip_model_sources, rewrite_followup, pick_sources, reply_language
 from groq import APIStatusError
+from ocr_engine import ocr_file, OcrError
 
 app = FastAPI(title="OrgMind AI Engine", version="1.0.0")
 
@@ -108,17 +109,27 @@ async def ocr_document(
 ):
     tmp_path = await save_upload(file, ALLOWED_OCR)
     try:
-        if tmp_path.lower().endswith('.pdf'):
-            extracted_text = await run_in_threadpool(extract_pdf_text, tmp_path)
-        else:
-            extracted_text = "Image OCR is not available yet."
-
+        doc_name = clean_doc_name(doc_name)
+        result = await run_in_threadpool(ocr_file, tmp_path)
+        text = result["text"]
         await run_in_threadpool(log_document_event, user_id, org_id, "scanned", doc_name, "success")
+
+        message = f"Document '{doc_name}' scanned successfully."
+        if not text.strip():
+            message = f"No readable text was found in '{doc_name}'."
+        elif result["truncated"]:
+            message += f" Only the first {result['pages_read']} of {result['pages_total']} pages were read."
         return {
-            "message": f"Document '{doc_name}' scanned successfully.",
-            "extracted_text": extracted_text[:3000],
-            "total_characters": len(extracted_text),
+            "message": message,
+            "extracted_text": text[:3000],
+            "total_characters": len(text),
+            "pages_read": result["pages_read"],
+            "pages_total": result["pages_total"],
+            "languages": result["languages"],
         }
+    except (DocumentError, OcrError) as e:
+        await run_in_threadpool(log_document_event, user_id, org_id, "scanned", doc_name, "rejected")
+        raise HTTPException(status_code=422, detail=str(e))
     except Exception:
         logging.exception("OCR failed")
         await run_in_threadpool(log_document_event, user_id, org_id, "scanned", doc_name, "failed")
@@ -126,6 +137,7 @@ async def ocr_document(
     finally:
         os.unlink(tmp_path)
 
+        
 PLACEHOLDER_NOTE = (
     "Some private values in this conversation are replaced by placeholders such as [PHONE_1] or [EMAIL_1]. "
     "They stand for real values the user is allowed to see. When you mention them, copy the placeholder "

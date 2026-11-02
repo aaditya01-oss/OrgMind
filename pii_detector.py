@@ -9,7 +9,7 @@ PII_PATTERNS = {
     # Nepali mobile numbers, optional +977, ASCII or Devanagari digits
     "phone_np": rf"(?<![{DIG}])(?:\+?(?:977|९७७)[-\s]?)?[9९][6-9६-९][{DIG}]{{8}}(?![{DIG}])",
     "email": r"(?<![\w.+-])[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}",
-    "pan_number": rf"(?<!\w)(?:PAN|प्यान)\s*(?:no\.?|number|नं\.?|नम्बर)?[-:\s]*(?P<v>[{DIG}]{{9}})(?![{DIG}])",
+    "pan_number": rf"(?<!\w)(?:PAN|प्यान|पान)\s*(?:no\.?|number|नं\.?|नम्बर)?\s*(?:is|हो|:)?[-:\s]*(?P<v>[{DIG}]{{9}})(?![{DIG}])",
     "citizenship": rf"(?<![{DIG}])[{DIG}]{{2}}-[{DIG}]{{2}}-[{DIG}]{{2}}-[{DIG}]{{5}}(?![{DIG}])",
     "nid": rf"(?<!\w)NID[-:\s]*(?P<v>[{DIG}]{{10,12}})(?![{DIG}])",
     # Long digit strings only count as a bank account when a bank/account word is nearby.

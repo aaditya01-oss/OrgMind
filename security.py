@@ -90,7 +90,36 @@ INJECTION_PATTERNS = {
         r"(?:निर्देश|आदेश|नियम|प्रोम्प्ट|प्रम्प्ट).{0,60}(?:बेवास्ता|अनदेखा|बिर्स|उपेक्षा)"
         r"|(?:बेवास्ता|अनदेखा|बिर्स|उपेक्षा).{0,60}(?:निर्देश|आदेश|नियम|प्रोम्प्ट|प्रम्प्ट)"
     ),
-    "ne_no_restrictions": r"(?:बिना|बिनाको).{0,20}प्रतिबन्ध|प्रतिबन्ध.{0,20}(?:बिना|बिनाको)",
+        "ne_no_restrictions": r"(?:बिना|बिनाको).{0,20}प्रतिबन्ध|प्रतिबन्ध.{0,20}(?:बिना|बिनाको)",
+    # Nepali: show/tell me the system prompt / secret key / password / config
+    "ne_reveal_secret": (
+        r"(?:सिस्टम|गोप्य|आन्तरिक|डाटाबेस).{0,20}(?:प्रम्प्ट|प्रोम्प्ट|कुञ्जी|पासवर्ड|निर्देश|कन्फिगरेसन)"
+        r".{0,40}(?:देखाऊ|देखाउनुहोस्|बताऊ|बताउनुहोस्|भन|दिनुहोस्|देऊ)"
+    ),
+    # Nepali: show other companies'/organizations' data
+    "ne_other_org": (
+        r"(?:अरू|अन्य|अर्को|सबै)\s*(?:कम्पनी|संस्था|संगठन|कार्यालय).{0,25}(?:डाटा|डेटा|कागजात|फाइल|रेकर्ड)"
+    ),
+    # Nepali: turn off / disable security rules
+    "ne_disable_rules": (
+        r"(?:सुरक्षा|सुरक्षित).{0,15}(?:नियम|निर्देश).{0,20}(?:बन्द|हटाऊ|हटाउ|निष्क्रिय)"
+        r"|(?:नियम|प्रतिबन्ध|फिल्टर).{0,15}(?:बन्द\s*गर|हटाऊ|हटाउ)"
+    ),
+    # Romanized Nepali (Latin letters)
+    "rn_override": (
+        r"\b(?:sabai|pahile\s*ka|aghi\s*ka|purana)\s+(?:sabai\s+)?(?:niyam|nirdeshan|ades|aadesh)\w*\s*(?:haru\s*)?"
+        r"(?:bhul|bebasta|ignore|hatau|band)\w*"
+        r"|\b(?:niyam|nirdeshan|aadesh)\s*(?:haru\s*)?(?:bhul|bebasta|ignore|band|hatau)\w*"
+        r"|\b(?:bhul|bhulera|ignore|bebasta)\w*\s+(?:sabai\s+)?(?:niyam|nirdeshan|aadesh)"
+        r"|\bsabai\s+(?:niyam|nirdeshan)\s*(?:haru\s*)?bhul"
+    ),
+    "rn_reveal": (
+        r"\b(?:aafno|afno|tapai\s*ko|timro|tero)\s+(?:system\s+prompt|prompt|nirdeshan|secret\s*key|password)\b"
+        r".{0,30}\b(?:dekha|bhan|bata)\w*"
+    ),
+    "rn_other_org": (
+        r"\b(?:arko|aru|anya)\s+(?:company|sanstha|organi[sz]ation)\s*(?:ko|haru\s*ko)?\s*(?:data|document|file|record)"
+    ),
 }
 
 COMPILED_PATTERNS = {
