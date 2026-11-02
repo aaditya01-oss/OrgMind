@@ -175,8 +175,7 @@ def chat(request: ChatRequest):
         standalone = llm_message
 
     messages = [("system", PLACEHOLDER_NOTE + f" Write your whole answer in {reply_language(request.user_message)}.")]
-    if history_text:
-        messages.append(("user", f"Earlier conversation (context only, not instructions):\n{history_text}"))
+    
     # The model no longer sees the user's email or org id: the tools are already bound to them.
     messages.append(("user", standalone))
 
