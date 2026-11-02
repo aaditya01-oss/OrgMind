@@ -7,7 +7,7 @@ import operator
 from config import GROQ_API_KEY, MODEL_NAME
 from pii_detector import pseudonymize
 
-llm = ChatGroq(api_key=GROQ_API_KEY, model_name=MODEL_NAME)
+llm = ChatGroq(api_key=GROQ_API_KEY, model_name=MODEL_NAME, max_retries=0, timeout=40)
 
 # SUPPORT AGENT TOOLS
 @tool
@@ -43,13 +43,22 @@ Security rules:
 
 
 def make_docmind_tools(org_id: str, pii_mapping: dict, sources: list, role: str = "member", department: str | None = None):
-    # org_id, role and department are fixed by the SERVER for this request. The model can never choose them.
 
+    # org_id, role and department are fixed by the SERVER for this request. The model can never choose them.
+    # The model can only use the tools provided to access the documents.
+    MAX_SEARCHES = 2          # the model may search at most twice per question
+    searches = {"count": 0}
+    sent = set()              # chunks already given to the model in this question
     @tool
     def search_documents(query: str, doc_name: str = "") -> str:
         """Searches this organization's documents. Use specific keywords from the question.
         Optionally pass doc_name (a loose name like 'SRS') to search only inside that document."""
         from search import semantic_search, list_document_names, find_documents, MIN_SIMILARITY
+
+        searches["count"] += 1
+        if searches["count"] > MAX_SEARCHES:
+            return ("Search limit reached. Do not search again. Answer using only what you already have; "
+                    "if it does not answer the question, say you could not find it in the available documents.")
 
         exact_name = None
         if doc_name.strip():
@@ -66,8 +75,22 @@ def make_docmind_tools(org_id: str, pii_mapping: dict, sources: list, role: str 
         if not results:
             return "No highly relevant information found."
 
+        # Never send the same chunk twice, and keep the second search small.
+        limit = 8 if searches["count"] == 1 else 4
+        fresh = []
+        for r in results:
+            key = (r[1], r[0][:200])
+            if key in sent:
+                continue
+            sent.add(key)
+            fresh.append(r)
+            if len(fresh) >= limit:
+                break
+        if not fresh:
+            return "Nothing new was found. Do not search again; answer from what you already have."
+
         context = ""
-        for content, found_name, similarity in results:
+        for content, found_name, similarity in fresh:
             safe_chunk, _ = pseudonymize(content[:700], pii_mapping)
             context += f"[Source: {found_name}]\n{safe_chunk}\n\n"
             sources.append({"doc": found_name, "text": safe_chunk, "forced": False})
@@ -156,7 +179,7 @@ def run_docmind_agent(state: OrgMindState):
     )
     docmind_agent = create_react_agent(llm, tools)
     messages = [("system", DOCMIND_RULES)] + list(state["messages"])
-    result = docmind_agent.invoke({"messages": messages})
+    result = docmind_agent.invoke({"messages": messages}, {"recursion_limit": 9})
     return {"messages": result["messages"]}
 
 def route_decision(state: OrgMindState):

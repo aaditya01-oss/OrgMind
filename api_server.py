@@ -19,6 +19,7 @@ from chat_helpers import strip_model_sources, rewrite_followup, pick_sources, re
 from groq import APIStatusError
 from ocr_engine import ocr_file, OcrError
 from id_fields import extract_id_card_fields
+from langgraph.errors import GraphRecursionError
 
 app = FastAPI(title="OrgMind AI Engine", version="1.0.0")
 
@@ -74,12 +75,14 @@ async def train_document(
     file: UploadFile = File(...),
     org_id: str = Form(...),
     doc_name: str = Form(...),
-    user_id: str = Form("unknown")
+    user_id: str = Form("unknown"),
+    visibility: str = Form("internal"),
+    department: str = Form("")
 ):
     tmp_path = await save_upload(file, ALLOWED_TRAIN)
     try:
         doc_name = clean_doc_name(doc_name)
-        chunks = await run_in_threadpool(process_document, tmp_path, org_id, doc_name)
+        chunks = await run_in_threadpool(process_document, tmp_path, org_id, doc_name, visibility, department, user_id)
         await run_in_threadpool(log_document_event, user_id, org_id, "uploaded", doc_name, "success")
         return {
             "message": f"Document '{doc_name}' successfully added to OrgMind knowledge base.",
@@ -203,7 +206,13 @@ def chat(request: ChatRequest):
                 org_id=request.org_id,
             )
         raise
-
+    except GraphRecursionError:
+        # The agent kept searching without finding anything it may use.
+        return ChatResponse(
+            response="I couldn't find that in the documents available to you.",
+            user_id=request.user_id,
+            org_id=request.org_id,
+        )
     raw_response = strip_model_sources(result['messages'][-1].content)
     source_names = pick_sources(raw_response, sources)
 

@@ -36,7 +36,7 @@ _VISIBLE = """
         WHERE d.org_id = %s
           AND (
               %s
-              OR d.visibility IN ('public', 'internal')
+              OR d.visibility IN ('public','registered', 'internal')
               OR (d.visibility = 'department' AND d.department = %s)
           )
     )

@@ -5,7 +5,7 @@ import psycopg2
 from embeddings import get_embedding
 from config import DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASSWORD
 
-
+VISIBILITIES = ("public", "registered", "internal", "department", "admin_only")
 class DocumentError(ValueError):
     """A problem with the uploaded document whose message is safe to show to the user."""
 
@@ -97,12 +97,20 @@ def extract_text(file_path):
     return extractor(file_path)
 
 
-def process_document(file_path, org_id, doc_name):
+def process_document(file_path, org_id, doc_name, visibility="internal", department=None, uploaded_by=None):
     """Extract, chunk, embed and store a document. Returns the number of chunks.
 
     Uploading a document with the same name again REPLACES the old version
     (inside one transaction, so a failure leaves the old version untouched).
     """
+    if visibility not in VISIBILITIES:
+        raise DocumentError("Invalid visibility label.")
+    department = (department or "").strip().lower() or None
+    if visibility == "department" and not department:
+        raise DocumentError("A department-only document needs a department.")
+    if visibility != "department":
+        department = None
+
     text = extract_text(file_path)
     chunks = chunk_text(text)
 
@@ -132,11 +140,14 @@ def process_document(file_path, org_id, doc_name):
                 )
                 cur.execute(
                     """
-                    INSERT INTO documents (org_id, doc_name)
-                    VALUES (%s, %s)
-                    ON CONFLICT (org_id, doc_name) DO NOTHING
+                    INSERT INTO documents (org_id, doc_name, visibility, department, uploaded_by)
+                    VALUES (%s, %s, %s, %s, %s)
+                    ON CONFLICT (org_id, doc_name) DO UPDATE
+                    SET visibility = EXCLUDED.visibility,
+                        department = EXCLUDED.department,
+                        uploaded_by = EXCLUDED.uploaded_by
                     """,
-                    (org_id, doc_name),
+                    (org_id, doc_name, visibility, department, uploaded_by),
                 )
 
     print(f"Processed {len(chunks)} chunks from {doc_name}")
