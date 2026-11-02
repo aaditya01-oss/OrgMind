@@ -18,6 +18,7 @@ from fastapi.concurrency import run_in_threadpool
 from chat_helpers import strip_model_sources, rewrite_followup, pick_sources, reply_language
 from groq import APIStatusError
 from ocr_engine import ocr_file, OcrError
+from id_fields import extract_id_card_fields
 
 app = FastAPI(title="OrgMind AI Engine", version="1.0.0")
 
@@ -126,6 +127,7 @@ async def ocr_document(
             "pages_read": result["pages_read"],
             "pages_total": result["pages_total"],
             "languages": result["languages"],
+            "id_card": extract_id_card_fields(text),
         }
     except (DocumentError, OcrError) as e:
         await run_in_threadpool(log_document_event, user_id, org_id, "scanned", doc_name, "rejected")
