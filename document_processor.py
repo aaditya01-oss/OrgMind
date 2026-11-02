@@ -130,6 +130,14 @@ def process_document(file_path, org_id, doc_name):
                     """,
                     rows,
                 )
+                cur.execute(
+                    """
+                    INSERT INTO documents (org_id, doc_name)
+                    VALUES (%s, %s)
+                    ON CONFLICT (org_id, doc_name) DO NOTHING
+                    """,
+                    (org_id, doc_name),
+                )
 
     print(f"Processed {len(chunks)} chunks from {doc_name}")
     return len(chunks)

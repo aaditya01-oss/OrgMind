@@ -49,6 +49,8 @@ class ChatRequest(BaseModel):
     user_id: str
     org_id: str
     org_name: str = "OrgMind"
+    role: str = "member"
+    department: str | None = None
 
 class ChatResponse(BaseModel):
     response: str
@@ -188,7 +190,9 @@ def chat(request: ChatRequest):
             "user_id": request.user_id,
             "route": "",
             "pii_mapping": pii_mapping,
-            "sources": sources
+            "sources": sources,
+            "role": request.role,
+            "department": request.department
         })
     except APIStatusError as exc:
         if exc.status_code in (413, 429):   # too large, or out of tokens this minute

@@ -42,8 +42,8 @@ Security rules:
 - Placeholders such as [PHONE_1] are real values hidden for privacy. Keep them exactly as written."""
 
 
-def make_docmind_tools(org_id: str, pii_mapping: dict, sources: list):
-    # org_id is fixed by the SERVER for this request. The model can never choose it.
+def make_docmind_tools(org_id: str, pii_mapping: dict, sources: list, role: str = "member", department: str | None = None):
+    # org_id, role and department are fixed by the SERVER for this request. The model can never choose them.
 
     @tool
     def search_documents(query: str, doc_name: str = "") -> str:
@@ -53,14 +53,15 @@ def make_docmind_tools(org_id: str, pii_mapping: dict, sources: list):
 
         exact_name = None
         if doc_name.strip():
-            matches = find_documents(list_document_names(org_id), doc_name)
+            matches = find_documents(list_document_names(org_id, role, department), doc_name)
             if not matches:
                 return f"No document matches '{doc_name}'. Call list_documents to see what exists."
             if len(matches) > 1:
                 return "Several documents match: " + ", ".join(matches) + ". Ask the user which one."
             exact_name = matches[0]
 
-        results = [r for r in semantic_search(query, org_id, top_k=8, doc_name=exact_name)
+        results = [r for r in semantic_search(query, org_id, top_k=8, doc_name=exact_name,
+                                              role=role, department=department)
                    if r[2] > MIN_SIMILARITY]
         if not results:
             return "No highly relevant information found."
@@ -76,7 +77,7 @@ def make_docmind_tools(org_id: str, pii_mapping: dict, sources: list):
     def list_documents() -> str:
         """Lists all documents available in this organization's knowledge base."""
         from search import list_document_names
-        names = list_document_names(org_id)
+        names = list_document_names(org_id, role, department)
         if not names:
             return "No documents found for this organization."
         return "Documents available: " + ", ".join(names)
@@ -87,13 +88,13 @@ def make_docmind_tools(org_id: str, pii_mapping: dict, sources: list):
         summarized. doc_name can be a loose name such as 'SRS' or 'enterprise'."""
         from search import list_document_names, find_documents, get_document_sample
 
-        matches = find_documents(list_document_names(org_id), doc_name)
+        matches = find_documents(list_document_names(org_id, role, department), doc_name)
         if not matches:
             return f"No document matches '{doc_name}'. Call list_documents to see what exists."
         if len(matches) > 1:
             return "Several documents match: " + ", ".join(matches) + ". Ask the user which one."
 
-        parts, total = get_document_sample(org_id, matches[0], n=8)
+        parts, total = get_document_sample(org_id, matches[0], n=8, role=role, department=department)
         text = "\n\n---\n\n".join(p[:900] for p in parts)
         safe_text, _ = pseudonymize(text, pii_mapping)
         sources.append({"doc": matches[0], "text": safe_text, "forced": True})
@@ -103,6 +104,7 @@ def make_docmind_tools(org_id: str, pii_mapping: dict, sources: list):
             f"if details may be missing, say so.\n\n{safe_text}"
         )
 
+    
     return [search_documents, list_documents, get_document_overview]
 
 # CREATE SPECIALIZED AGENTS
@@ -116,6 +118,8 @@ class OrgMindState(TypedDict):
     route: str
     pii_mapping: dict
     sources: list
+    role: str
+    department: str
 
 # ORCHESTRATOR
 def orchestrator(state: OrgMindState):
@@ -144,11 +148,16 @@ def run_support_agent(state: OrgMindState):
     return {"messages": result["messages"]}
 
 def run_docmind_agent(state: OrgMindState):
-       """Run the document mind agent."""
-       docmind_agent = create_react_agent(llm, make_docmind_tools(state["org_id"], state["pii_mapping"], state["sources"]))
-       messages = [("system", DOCMIND_RULES)] + list(state["messages"])
-       result = docmind_agent.invoke({"messages": messages})
-       return {"messages": result["messages"]}
+    """Run the document mind agent."""
+    tools = make_docmind_tools(
+        state["org_id"], state["pii_mapping"], state["sources"],
+        role=state.get("role") or "member",            # lowest access if missing
+        department=state.get("department") or None,
+    )
+    docmind_agent = create_react_agent(llm, tools)
+    messages = [("system", DOCMIND_RULES)] + list(state["messages"])
+    result = docmind_agent.invoke({"messages": messages})
+    return {"messages": result["messages"]}
 
 def route_decision(state: OrgMindState):
     return state["route"]
