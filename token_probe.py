@@ -4,7 +4,7 @@ sys.stdout.reconfigure(encoding="utf-8")
 from langchain_core.callbacks import BaseCallbackHandler
 from langgraph.prebuilt import create_react_agent
 from multi_agent import llm, make_docmind_tools, DOCMIND_RULES
-
+import re
 
 class Probe(BaseCallbackHandler):
     def __init__(self):
@@ -24,11 +24,17 @@ class Probe(BaseCallbackHandler):
     def on_tool_start(self, serialized, input_str, **kwargs):
         print(f"  tool: {serialized.get('name')}  {str(input_str)[:80]}")
 
+    def on_tool_end(self, output, **kwargs):
+        text = getattr(output, "content", str(output))
+        docs = re.findall(r"\[Source: ([^\]]+)\]", text)
+        print("  documents returned:", docs)
+        print("  contains the helpdesk days sentence:", "आइतबारदेखि" in text)
+
 
 question = sys.argv[1] if len(sys.argv) > 1 else "What is the project codename for the new office?"
 print("QUESTION:", question)
 probe = Probe()
-tools = make_docmind_tools("01", {}, [], role="member", department=None)
+tools = make_docmind_tools("01", {}, [], role="member", department=None, question=question)
 agent = create_react_agent(llm, tools)
 try:
     result = agent.invoke(

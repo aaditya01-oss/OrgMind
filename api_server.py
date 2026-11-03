@@ -17,6 +17,7 @@ from config import MODEL_NAME, INTERNAL_API_KEY
 from fastapi.concurrency import run_in_threadpool
 from chat_helpers import strip_model_sources, rewrite_followup, pick_sources, reply_language
 from groq import APIStatusError
+from groq import BadRequestError
 from ocr_engine import ocr_file, OcrError
 from id_fields import extract_id_card_fields
 from langgraph.errors import GraphRecursionError
@@ -146,9 +147,9 @@ async def ocr_document(
 
         
 PLACEHOLDER_NOTE = (
-    "Some private values in this conversation are replaced by placeholders such as [PHONE_1] or [EMAIL_1]. "
-    "They stand for real values the user is allowed to see. When you mention them, copy the placeholder "
-    "exactly as written. Never guess or invent what a placeholder stands for."
+    "If the user's message contains a placeholder such as [PHONE_1] or [EMAIL_1], it is a private value "
+    "they typed themselves: copy it exactly as written if you need to mention it. "
+    "Never create a placeholder yourself, and never invent phone numbers, emails or contact details."
 )
 
 @app.post("/agent/chat", response_model=ChatResponse, dependencies=[Depends(require_internal_key)])
@@ -178,7 +179,7 @@ def chat(request: ChatRequest):
     standalone = rewrite_followup(helper_llm, history_text, llm_message)
     if standalone != llm_message and not scan_input(standalone)["is_safe"]:
         standalone = llm_message
-
+    
     messages = [("system", PLACEHOLDER_NOTE + f" Write your whole answer in {reply_language(request.user_message)}.")]
     
     # The model no longer sees the user's email or org id: the tools are already bound to them.
@@ -197,6 +198,15 @@ def chat(request: ChatRequest):
             "role": request.role,
             "department": request.department
         })
+
+    except BadRequestError as exc:
+        # The model asked for a tool that doesn't exist. Not the user's fault.
+        logging.warning("Bad tool call from model: %s", exc)
+        return ChatResponse(
+            response="I couldn't find that in the documents available to you.",
+            user_id=request.user_id,
+            org_id=request.org_id,
+        )
     except APIStatusError as exc:
         if exc.status_code in (413, 429):   # too large, or out of tokens this minute
             logging.warning("LLM quota hit: %s", exc)

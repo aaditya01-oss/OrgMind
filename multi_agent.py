@@ -49,7 +49,7 @@ Security rules:
 - Placeholders such as [PHONE_1] are real values hidden for privacy. Keep them exactly as written."""
 
 
-def make_docmind_tools(org_id: str, pii_mapping: dict, sources: list, role: str = "member", department: str | None = None):
+def make_docmind_tools(org_id: str, pii_mapping: dict, sources: list, role: str = "member", department: str | None = None, question: str = ""):
 
     # org_id, role and department are fixed by the SERVER for this request. The model can never choose them.
     # The model can only use the tools provided to access the documents.
@@ -76,9 +76,19 @@ def make_docmind_tools(org_id: str, pii_mapping: dict, sources: list, role: str 
                 return "Several documents match: " + ", ".join(matches) + ". Ask the user which one."
             exact_name = matches[0]
 
-        results = [r for r in semantic_search(query, org_id, top_k=8, doc_name=exact_name,
-                                              role=role, department=department)
-                   if r[2] > MIN_SIMILARITY]
+        found = semantic_search(query, org_id, top_k=8, doc_name=exact_name, role=role, department=department)
+        # The model may rewrite or translate its query ("helpdesk hours"), which can miss documents written
+        # in another language. So the user's own wording is always searched too, and the best of both is kept.
+        if question and question.strip() != query.strip():
+            found += semantic_search(question, org_id, top_k=8, doc_name=exact_name, role=role, department=department)
+        best = {}
+        for r in found:
+            key = (r[1], r[0][:200])
+            if key not in best or r[2] > best[key][2]:
+                best[key] = r
+        results = sorted((r for r in best.values() if r[2] > MIN_SIMILARITY),
+                         key=lambda r: r[2], reverse=True)[:8]
+        
         if not results:
             return ("No highly relevant information found. Do not search again; "
                     "tell the user you could not find it in the available documents.")
@@ -140,7 +150,15 @@ def make_docmind_tools(org_id: str, pii_mapping: dict, sources: list, role: str 
     return [search_documents, list_documents, get_document_overview]
 
 # CREATE SPECIALIZED AGENTS
-support_agent = create_react_agent(llm, [create_ticket, get_ticket_status])
+SUPPORT_RULES = """You are the support assistant. You have exactly two tools: create_ticket and get_ticket_status.
+You cannot search the web or any documents.
+- If the user reports a problem, give 2 or 3 short, simple things to try first, then create a ticket with
+  create_ticket (priority 'low', 'medium' or 'high') and tell them the ticket number.
+- If the user asks about an existing ticket, use get_ticket_status.
+- Never call any other tool. Never invent ticket numbers; use only what the tools return.
+- Write your whole answer in the same language as the user's message."""
+
+support_agent = create_react_agent(llm, [create_ticket, get_ticket_status], prompt=SUPPORT_RULES)
 
 # STATE
 class OrgMindState(TypedDict):
@@ -158,12 +176,17 @@ def orchestrator(state: OrgMindState):
     last_message = state["messages"][-1]
     
     routing_prompt = f"""
-    Analyze this user message and decide which agent should handle it.
+    Decide which agent should handle this user message.
     Return ONLY one word: 'support' or 'docmind'
-    
-    - support: for issues, problems, tickets, IT help, broken things
-    - docmind: for questions about documents, policies, information lookup
-    
+
+    - support: ONLY when the user reports something broken or asks you to create or check a support ticket.
+      Examples: "my laptop won't turn on", "I can't log in, please open a ticket", "what is the status of my ticket?"
+    - docmind: for EVERY question about information, rules, policies, hours, days, contacts, procedures
+      or anything that could be written in a company document, even if it mentions IT or the helpdesk.
+      Examples: "What days is the IT helpdesk open?", "हेल्पडेस्क कति बजे खुल्छ?", "How many leave days do I get?"
+
+    If unsure, answer docmind.
+
     User message: {last_message}
     """
     
@@ -176,15 +199,18 @@ def orchestrator(state: OrgMindState):
         return {"route": "docmind"}
 
 def run_support_agent(state: OrgMindState):
-    result = support_agent.invoke({"messages": state["messages"]})
+    result = support_agent.invoke({"messages": state["messages"]}, {"recursion_limit": 5})
     return {"messages": result["messages"]}
 
 def run_docmind_agent(state: OrgMindState):
     """Run the document mind agent."""
+    last = state["messages"][-1]
+    question = last[1] if isinstance(last, tuple) else getattr(last, "content", "")
     tools = make_docmind_tools(
         state["org_id"], state["pii_mapping"], state["sources"],
         role=state.get("role") or "member",            # lowest access if missing
         department=state.get("department") or None,
+        question=question,
     )
     docmind_agent = create_react_agent(llm, tools)
     messages = [("system", DOCMIND_RULES)] + list(state["messages"])
