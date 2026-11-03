@@ -6,8 +6,15 @@ from typing import TypedDict, Annotated
 import operator
 from config import GROQ_API_KEY, MODEL_NAME
 from pii_detector import pseudonymize
+import os
 
-llm = ChatGroq(api_key=GROQ_API_KEY, model_name=MODEL_NAME, max_retries=0, timeout=40)
+llm = ChatGroq(api_key=GROQ_API_KEY, model_name=MODEL_NAME, temperature=0, max_retries=0, timeout=40)
+
+# A second model for the small helper calls (router, follow-up rewrite). Groq counts limits per
+# model, so these calls no longer use up the answering model's token budget.
+HELPER_MODEL = os.getenv("HELPER_MODEL_NAME", "openai/gpt-oss-120b")
+helper_llm = ChatGroq(api_key=GROQ_API_KEY, model_name=HELPER_MODEL,
+                      max_retries=0, timeout=30, reasoning_effort="low",temperature=0)
 
 # SUPPORT AGENT TOOLS
 @tool
@@ -73,7 +80,8 @@ def make_docmind_tools(org_id: str, pii_mapping: dict, sources: list, role: str 
                                               role=role, department=department)
                    if r[2] > MIN_SIMILARITY]
         if not results:
-            return "No highly relevant information found."
+            return ("No highly relevant information found. Do not search again; "
+                    "tell the user you could not find it in the available documents.")
 
         # Never send the same chunk twice, and keep the second search small.
         limit = 8 if searches["count"] == 1 else 4
@@ -94,7 +102,8 @@ def make_docmind_tools(org_id: str, pii_mapping: dict, sources: list, role: str 
             safe_chunk, _ = pseudonymize(content[:700], pii_mapping)
             context += f"[Source: {found_name}]\n{safe_chunk}\n\n"
             sources.append({"doc": found_name, "text": safe_chunk, "forced": False})
-        return context
+        return context + ("(If none of these passages answers the question, say you could not find it "
+                          "in the available documents. Do not search again.)")
 
     @tool
     def list_documents() -> str:
@@ -158,7 +167,7 @@ def orchestrator(state: OrgMindState):
     User message: {last_message}
     """
     
-    response = llm.invoke(routing_prompt)
+    response = helper_llm.invoke(routing_prompt)
     route = response.content.strip().lower()
     
     if "support" in route:
@@ -179,7 +188,7 @@ def run_docmind_agent(state: OrgMindState):
     )
     docmind_agent = create_react_agent(llm, tools)
     messages = [("system", DOCMIND_RULES)] + list(state["messages"])
-    result = docmind_agent.invoke({"messages": messages}, {"recursion_limit": 9})
+    result = docmind_agent.invoke({"messages": messages}, {"recursion_limit": 5})
     return {"messages": result["messages"]}
 
 def route_decision(state: OrgMindState):

@@ -1,6 +1,6 @@
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
-from multi_agent import app as multi_agent_app, llm
+from multi_agent import app as multi_agent_app, llm, helper_llm
 from security import scan_input
 from pii_detector import scan_for_pii, pseudonymize, restore_pii, mask_pii
 from memory import save_conversation, get_conversation_history
@@ -175,7 +175,7 @@ def chat(request: ChatRequest):
     history_text = "\n".join(f"{m['role']}: {m['content'][:300]}" for m in history) if history else ""
     # Turn a short follow-up ("ok then ours") into a full question. The rewrite is NEW text,
     # so it is scanned too; if it looks unsafe we simply use the user's original message.
-    standalone = rewrite_followup(llm, history_text, llm_message)
+    standalone = rewrite_followup(helper_llm, history_text, llm_message)
     if standalone != llm_message and not scan_input(standalone)["is_safe"]:
         standalone = llm_message
 
