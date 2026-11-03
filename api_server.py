@@ -172,7 +172,8 @@ def chat(request: ChatRequest):
     llm_message, _ = pseudonymize(request.user_message, pii_mapping)
 
     # Load history (what we stored is already masked)
-    history = get_conversation_history(request.user_id, request.org_id, limit=4)
+    is_visitor = request.role == "visitor"   # anonymous website visitors share one id, so no history for them
+    history = [] if is_visitor else get_conversation_history(request.user_id, request.org_id, limit=4)
     history_text = "\n".join(f"{m['role']}: {m['content'][:300]}" for m in history) if history else ""
     # Turn a short follow-up ("ok then ours") into a full question. The rewrite is NEW text,
     # so it is scanned too; if it looks unsafe we simply use the user's original message.
@@ -236,8 +237,9 @@ def chat(request: ChatRequest):
     if pii_result["contains_pii"]:
         log_pii_detection(request.user_id, request.org_id, pii_result["pii_types_found"])
 
-    save_conversation(request.user_id, request.org_id, "user", safe_input)
-    save_conversation(request.user_id, request.org_id, "assistant", safe_response)
+    if not is_visitor:
+        save_conversation(request.user_id, request.org_id, "user", safe_input)
+        save_conversation(request.user_id, request.org_id, "assistant", safe_response)
     log_conversation(request.user_id, request.org_id, safe_input, len(response))
     track_conversation(request.user_id, request.org_id, safe_input, safe_response, MODEL_NAME)
 

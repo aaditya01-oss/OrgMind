@@ -174,6 +174,9 @@ class OrgMindState(TypedDict):
 # ORCHESTRATOR
 def orchestrator(state: OrgMindState):
     last_message = state["messages"][-1]
+        # Anonymous website visitors can only ask questions. They never get the ticket tools.
+    if state.get("role") == "visitor":
+        return {"route": "docmind"}
     
     routing_prompt = f"""
     Decide which agent should handle this user message.

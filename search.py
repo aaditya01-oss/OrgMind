@@ -36,16 +36,22 @@ _VISIBLE = """
         WHERE d.org_id = %s
           AND (
               %s
-              OR d.visibility IN ('public','registered', 'internal')
+              OR d.visibility = 'public'
+              OR (%s AND d.visibility = 'registered')
+              OR (%s AND d.visibility = 'internal')
               OR (d.visibility = 'department' AND d.department = %s)
           )
     )
 """
 
-
 def _viewer_params(org_id, role, department):
-    return (org_id, role == "admin", department)
-
+    # Order must match the %s slots in _VISIBLE: org, is_admin, sees registered, sees internal, department.
+    # customer = signed-up outside user: public + registered only. visitor (not logged in) = public only.
+    is_admin = role == "admin"
+    sees_registered = role != "visitor"
+    sees_internal = role not in ("customer", "visitor")
+    dept = department if sees_internal else None   # outsiders never match a department
+    return (org_id, is_admin, sees_registered, sees_internal, dept)
 
 def semantic_search(query, org_id, top_k=5, doc_name=None, role="member", department=None):
     """Nearest chunks for the query, inside ONE organization, among documents this person may see.
