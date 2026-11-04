@@ -17,15 +17,25 @@ helper_llm = ChatGroq(api_key=GROQ_API_KEY, model_name=HELPER_MODEL,
                       max_retries=0, timeout=30, reasoning_effort="low",temperature=0)
 
 # SUPPORT AGENT TOOLS
-@tool
-def create_ticket(issue: str, priority: str) -> str:
-    """Creates a support ticket for user issues."""
-    return f"Ticket TKT-001 created. Issue: {issue}. Priority: {priority}. IT notified."
+def make_support_tools(org_id, user_id, role):
+    """Ticket tools already tied to ONE person in ONE organization. The model cannot change either."""
+    from tickets import create_ticket_row, get_ticket_row, ticket_label
 
-@tool
-def get_ticket_status(ticket_id: str) -> str:
-    """Gets the status of a support ticket."""
-    return f"Ticket {ticket_id}: Status=In Progress, ETA=2 hours"
+    @tool
+    def create_ticket(issue: str, priority: str = "medium") -> str:
+        """Creates a support ticket for the user's problem. priority is 'low', 'medium' or 'high'."""
+        ticket_id, prio = create_ticket_row(org_id, user_id, issue, priority)
+        return f"Ticket {ticket_label(ticket_id)} created with priority {prio}. The team has been notified."
+
+    @tool
+    def get_ticket_status(ticket_id: str) -> str:
+        """Gets the status of the user's support ticket by its number, for example TKT-0007."""
+        row = get_ticket_row(org_id, user_id, role, ticket_id)
+        if not row:
+            return "No ticket with that number was found for you."
+        return f"Ticket {ticket_label(row['id'])}: status {row['status']}, priority {row['priority']}."
+
+    return [create_ticket, get_ticket_status]
 
 DOCMIND_RULES = """You answer questions using ONLY this organization's documents, through your tools.
 
@@ -158,7 +168,7 @@ You cannot search the web or any documents.
 - Never call any other tool. Never invent ticket numbers; use only what the tools return.
 - Write your whole answer in the same language as the user's message."""
 
-support_agent = create_react_agent(llm, [create_ticket, get_ticket_status], prompt=SUPPORT_RULES)
+
 
 # STATE
 class OrgMindState(TypedDict):
@@ -202,7 +212,9 @@ def orchestrator(state: OrgMindState):
         return {"route": "docmind"}
 
 def run_support_agent(state: OrgMindState):
-    result = support_agent.invoke({"messages": state["messages"]}, {"recursion_limit": 5})
+    tools = make_support_tools(state["org_id"], state["user_id"], state.get("role", "member"))
+    agent = create_react_agent(llm, tools, prompt=SUPPORT_RULES)
+    result = agent.invoke({"messages": state["messages"]}, {"recursion_limit": 5})
     return {"messages": result["messages"]}
 
 def run_docmind_agent(state: OrgMindState):
