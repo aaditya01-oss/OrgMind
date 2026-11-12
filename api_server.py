@@ -21,6 +21,7 @@ from groq import BadRequestError
 from ocr_engine import ocr_file, OcrError
 from id_fields import extract_id_card_fields
 from langgraph.errors import GraphRecursionError
+from documents_admin import list_documents_admin, set_visibility, delete_document
 
 app = FastAPI(title="OrgMind AI Engine", version="1.0.0")
 
@@ -144,7 +145,43 @@ async def ocr_document(
         raise HTTPException(status_code=500, detail="Document scan failed")
     finally:
         os.unlink(tmp_path)
+class DocLabelRequest(BaseModel):
+    org_id: str
+    doc_name: str
+    visibility: str
+    department: str | None = None
+    user_id: str
 
+
+class DocDeleteRequest(BaseModel):
+    org_id: str
+    doc_name: str
+    user_id: str
+
+
+@app.get("/documents/list", dependencies=[Depends(require_internal_key)])
+def documents_list(org_id: str):
+    return {"documents": list_documents_admin(org_id)}
+
+
+@app.post("/documents/relabel", dependencies=[Depends(require_internal_key)])
+def documents_relabel(req: DocLabelRequest):
+    try:
+        changed = set_visibility(req.org_id, req.doc_name, req.visibility, req.department)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    if not changed:
+        raise HTTPException(status_code=404, detail="Document not found")
+    log_document_event(req.user_id, req.org_id, "relabeled", req.doc_name, "success")
+    return {"message": "Label updated"}
+
+
+@app.post("/documents/delete", dependencies=[Depends(require_internal_key)])
+def documents_delete(req: DocDeleteRequest):
+    if not delete_document(req.org_id, req.doc_name):
+        raise HTTPException(status_code=404, detail="Document not found")
+    log_document_event(req.user_id, req.org_id, "deleted", req.doc_name, "success")
+    return {"message": "Document deleted"}
         
 PLACEHOLDER_NOTE = (
     "If the user's message contains a placeholder such as [PHONE_1] or [EMAIL_1], it is a private value "
