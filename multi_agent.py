@@ -127,6 +127,17 @@ def make_docmind_tools(org_id: str, pii_mapping: dict, sources: list, role: str 
         return context + ("(If none of these passages answers the question, say you could not find it "
                           "in the available documents. Do not search again.)")
 
+
+    @tool
+    def get_my_profile() -> str:
+        """Tells the user their own role and department in this organization.
+        Use it when they ask about their own role, department or access. This is not in the documents."""
+        role_names = {"admin": "an administrator", "member": "an employee",
+                      "customer": "a customer", "visitor": "an anonymous visitor"}
+        text = f"The user is {role_names.get(role, 'a user')}"
+        text += f" in the {department} department." if department else " and has no department."
+        return text
+
     @tool
     def list_documents() -> str:
         """Lists all documents available in this organization's knowledge base."""
@@ -159,7 +170,7 @@ def make_docmind_tools(org_id: str, pii_mapping: dict, sources: list, role: str 
         )
 
     
-    return [search_documents, list_documents, get_document_overview]
+    return [search_documents, list_documents, get_document_overview, get_my_profile]
 
 # CREATE SPECIALIZED AGENTS
 SUPPORT_RULES = """You are the support assistant. You have exactly two tools: create_ticket and get_ticket_status.

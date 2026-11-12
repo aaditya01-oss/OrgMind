@@ -218,7 +218,10 @@ def chat(request: ChatRequest):
     if standalone != llm_message and not scan_input(standalone)["is_safe"]:
         standalone = llm_message
     
-    messages = [("system", PLACEHOLDER_NOTE + f" Write your whole answer in {reply_language(request.user_message)}.")]
+    role_names = {"admin": "an administrator", "member": "an employee", "customer": "a customer", "visitor": "an anonymous visitor"}
+    who = f" The person asking is {role_names.get(request.role, 'a user')}"
+    who += f" in the {request.department} department." if request.department else "."
+    messages = [("system", PLACEHOLDER_NOTE + who + f" Write your whole answer in {reply_language(request.user_message)}.")]
     
     # The model no longer sees the user's email or org id: the tools are already bound to them.
     messages.append(("user", standalone))
