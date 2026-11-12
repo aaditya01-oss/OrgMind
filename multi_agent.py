@@ -17,20 +17,22 @@ helper_llm = ChatGroq(api_key=GROQ_API_KEY, model_name=HELPER_MODEL,
                       max_retries=0, timeout=30, reasoning_effort="low",temperature=0)
 
 # SUPPORT AGENT TOOLS
-def make_support_tools(org_id, user_id, role):
+def make_support_tools(org_id, user_id, role, department=None):
     """Ticket tools already tied to ONE person in ONE organization. The model cannot change either."""
     from tickets import create_ticket_row, get_ticket_row, ticket_label
 
     @tool
-    def create_ticket(issue: str, priority: str = "medium") -> str:
-        """Creates a support ticket for the user's problem. priority is 'low', 'medium' or 'high'."""
-        ticket_id, prio = create_ticket_row(org_id, user_id, issue, priority)
-        return f"Ticket {ticket_label(ticket_id)} created with priority {prio}. The team has been notified."
+    def create_ticket(issue: str, priority: str = "medium", department_name: str = "") -> str:
+        """Creates a support ticket for the user's problem. priority is 'low', 'medium' or 'high'.
+        department_name is the best matching department from the list you were given, or empty if unsure."""
+        ticket_id, prio, dept = create_ticket_row(org_id, user_id, issue, priority, department_name)
+        routed = f" and routed to the {dept} team" if dept else ""
+        return f"Ticket {ticket_label(ticket_id)} created with priority {prio}{routed}. The team has been notified."
 
     @tool
     def get_ticket_status(ticket_id: str) -> str:
-        """Gets the status of the user's support ticket by its number, for example TKT-0007."""
-        row = get_ticket_row(org_id, user_id, role, ticket_id)
+        """Gets the status of a support ticket by its number, for example TKT-0007."""
+        row = get_ticket_row(org_id, user_id, role, ticket_id, department)
         if not row:
             return "No ticket with that number was found for you."
         return f"Ticket {ticket_label(row['id'])}: status {row['status']}, priority {row['priority']}."
@@ -212,8 +214,16 @@ def orchestrator(state: OrgMindState):
         return {"route": "docmind"}
 
 def run_support_agent(state: OrgMindState):
-    tools = make_support_tools(state["org_id"], state["user_id"], state.get("role", "member"))
-    agent = create_react_agent(llm, tools, prompt=SUPPORT_RULES)
+    from tickets import list_departments
+
+    org_id = state["org_id"]
+    tools = make_support_tools(org_id, state["user_id"], state.get("role", "member"), state.get("department"))
+    departments = list_departments(org_id)
+    prompt = SUPPORT_RULES + (
+        "\nWhen you create a ticket, set department_name to the best matching department from this list, "
+        f"or leave it empty if none clearly fits: {', '.join(departments) if departments else 'none exist yet'}."
+    )
+    agent = create_react_agent(llm, tools, prompt=prompt)
     result = agent.invoke({"messages": state["messages"]}, {"recursion_limit": 5})
     return {"messages": result["messages"]}
 
