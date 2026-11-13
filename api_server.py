@@ -259,11 +259,14 @@ def chat(request: ChatRequest):
         raise
     except GraphRecursionError:
         # The agent kept searching without finding anything it may use.
+        logging.warning("Step limit reached for question: %s", request.user_message[:80])
         return ChatResponse(
             response="I couldn't find that in the documents available to you.",
             user_id=request.user_id,
             org_id=request.org_id,
         )
+
+    
     raw_response = strip_model_sources(result['messages'][-1].content)
     source_names = pick_sources(raw_response, sources)
 

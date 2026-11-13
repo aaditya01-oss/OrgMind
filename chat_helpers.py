@@ -52,8 +52,8 @@ def rewrite_followup(llm, history_text: str, message: str, max_words: int = 15, 
 import math
 
 _ASCII_DIGITS = str.maketrans("०१२३४५६७८९", "0123456789")   # Devanagari digits -> 0-9, so ९८ matches 98
-_NUMBER_WEIGHT = 4
-_KEEP_RATIO = 0.35
+_NUMBER_WEIGHT = 2
+_KEEP_RATIO = 0.75
 _TOKEN = re.compile(r"[\wऀ-ॿ]+")                    # \w alone would split Nepali words at vowel signs
 
 
@@ -84,7 +84,7 @@ def pick_sources(answer: str, evidence: list, max_sources: int = 3) -> list:
     - forced items (a document the user asked to summarize) are always listed.
     - Otherwise each chunk is scored by how many of the answer's words and numbers it contains,
       weighting rare words more (a word found in every retrieved chunk says nothing).
-    - A document is listed only if it scores at least 35% as well as the best one (max 3 documents).
+    - A document is listed only if it scores at least 60% as well as the best one (max 3 documents).
     - If nothing overlaps (for example the answer says "not found"), no source is listed.
     """
     chosen = [e["doc"] for e in evidence if e.get("forced")]
@@ -95,22 +95,32 @@ def pick_sources(answer: str, evidence: list, max_sources: int = 3) -> list:
         n = len(items)
         df = {t: sum(1 for c in chunk_tokens if t in c) for t in answer_tokens}
         idf = {t: math.log(1 + (n - df[t] + 0.5) / (df[t] + 0.5)) for t in answer_tokens}
+        # Check if any number in the answer is present in the retrieved text
+        any_number_evidence = any(
+            t.isdigit() and df[t] <= max(1, n // 2) and df[t] > 0 for t in answer_tokens
+        )
 
         best_per_doc = {}
         for e, toks in zip(items, chunk_tokens):
             matched = [t for t in answer_tokens if t in toks]
             # Numbers are the strongest evidence (they survive translation: ९० == 90)
             score = sum(idf[t] * (_NUMBER_WEIGHT if t.isdigit() else 1) for t in matched)
+            if any_number_evidence:
+                score = sum(1 for t in matched if t.isdigit())   # numbers decide: how many of the answer's numbers does this text contain?
             number_hit = any(t.isdigit() and df[t] <= max(1, n // 2) for t in matched)
             rare_words = [t for t in matched if not t.isdigit() and df[t] <= max(1, n // 3)]
             if _is_devanagari(answer) != _is_devanagari(e["text"]):
                 # Answer and document are in different languages: numbers are the only shared words
                 qualifies = number_hit
+            elif any_number_evidence:
+                # Some document confirms a number from the answer: documents that confirm none are coincidences
+                qualifies = number_hit and len(rare_words) >= 1
             else:
-                # Same language: a number alone is not enough (the same number may appear anywhere)
-                qualifies = (number_hit and len(rare_words) >= 1) or len(rare_words) >= 3
+                # The answer has no usable numbers: fall back to several shared rare words
+                qualifies = len(rare_words) >= 3
             if qualifies and score > best_per_doc.get(e["doc"], 0):
                 best_per_doc[e["doc"]] = score
+
         if best_per_doc:
             top = max(best_per_doc.values())
             for e in items:                                   # keep retrieval order
