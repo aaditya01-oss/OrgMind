@@ -17,15 +17,27 @@ helper_llm = ChatGroq(api_key=GROQ_API_KEY, model_name=HELPER_MODEL,
                       max_retries=0, timeout=30, reasoning_effort="low",temperature=0)
 
 # SUPPORT AGENT TOOLS
-def make_support_tools(org_id, user_id, role, department=None):
-    """Ticket tools already tied to ONE person in ONE organization. The model cannot change either."""
-    from tickets import create_ticket_row, get_ticket_row, ticket_label
-
+def make_support_tools(org_id, user_id, role, department=None, message=""):
+    """Ticket tools already tied to ONE person in ONE organization. The model cannot change either.
+    `message` is the person's own latest message; the priority check judges THAT, not the model's words."""
+    from tickets import create_ticket_row, get_ticket_row, ticket_label, escalate_ticket_row, find_same_ticket
+        
     @tool
-    def create_ticket(issue: str, priority: str = "medium", department_name: str = "") -> str:
-        """Creates a support ticket for the user's problem. priority is 'low', 'medium' or 'high'.
-        department_name is the best matching department from the list you were given, or empty if unsure."""
-        ticket_id, prio, dept = create_ticket_row(org_id, user_id, issue, priority, department_name)
+    def create_ticket(issue: str, priority: str = "medium", department_name: str = "", new_problem: bool = False) -> str:
+        """Creates a support ticket for a NEW problem. priority is 'low', 'medium' or 'high'.
+        department_name is the best matching department from the list you were given, or empty if unsure.
+        new_problem: set to true ONLY if a previous answer of this tool told you to ask the user and they
+        confirmed it is a different problem."""
+        verdict, same_id = find_same_ticket(helper_llm, org_id, user_id, issue)
+        if verdict == "same":
+            return (f"The user already has the open ticket {ticket_label(same_id)} for this same problem. "
+                    "Do NOT create another ticket. If they want it handled faster, call raise_ticket_priority "
+                    f"with {ticket_label(same_id)}; otherwise tell them that ticket is already being handled.")
+        if verdict == "unsure" and not new_problem:
+            return ("The user has other open tickets and it is unclear whether this is the same problem. "
+                    "Ask the user: is this a new, different problem? If they say yes, call create_ticket again "
+                    "with new_problem set to true.")
+        ticket_id, prio, dept = create_ticket_row(org_id, user_id, issue, priority, department_name, llm=helper_llm)
         routed = f" and routed to the {dept} team" if dept else ""
         return f"Ticket {ticket_label(ticket_id)} created with priority {prio}{routed}. The team has been notified."
 
@@ -37,7 +49,29 @@ def make_support_tools(org_id, user_id, role, department=None):
             return "No ticket with that number was found for you."
         return f"Ticket {ticket_label(row['id'])}: status {row['status']}, priority {row['priority']}."
 
-    return [create_ticket, get_ticket_status]
+    @tool
+    def raise_ticket_priority(ticket_id: str = "") -> str:
+        """Raises the priority of an EXISTING ticket when the user says their problem is urgent or is upset
+        that it is not solved yet. Pass the ticket number if the user gave one (for example TKT-0001);
+        leave it empty to use their most recent open ticket. Never create a new ticket for this."""
+        out = escalate_ticket_row(org_id, user_id, role, ticket_id, department, message, helper_llm)
+        result = out.get("result")
+        label = ticket_label(out["ticket_id"]) if out.get("ticket_id") else ""
+        if result == "raised":
+            return f"Ticket {label} priority raised to {out['priority']}. The team has been told it is urgent."
+        if result == "already_high":
+            return f"Ticket {label} already has the highest priority."
+        if result == "already_escalated":
+            return f"Ticket {label} was already marked urgent earlier. The team has it flagged."
+        if result == "closed":
+            return f"Ticket {label} is already resolved."
+        if result == "not_urgent":
+            return f"Ticket {label} was not changed. Ask the user how urgent it is and why."
+        if result == "no_open_ticket":
+            return "The user has no open ticket. Ask what the problem is, then create a ticket."
+        return "No ticket with that number was found for you."
+
+    return [create_ticket, get_ticket_status, raise_ticket_priority]
 
 DOCMIND_RULES = """You answer questions using ONLY this organization's documents, through your tools.
 
@@ -47,7 +81,7 @@ How to work:
 2. If the question is vague ("what is the file about?", "what do we have?", "summarize the document"),
    call list_documents first. If one document is clearly meant (or only one exists), call
    get_document_overview with its name, then summarize. If several could be meant, ask which one.
-3. 3. As soon as a search returns relevant text, write the answer from it right away. Do not call more tools.
+3. As soon as a search returns relevant text, write the answer from it right away. Do not call more tools.
    If a tool returns nothing useful, say so plainly. Never invent facts or numbers.
 4. Use only the days, dates, times, numbers and names that are written in the text. If the text does not name something, do not name it. For example, "six days a week, Saturday off" must not become named weekdays.
 5. If the question is Nepali written in English letters (for example "bida", "kati din", "paunxu", "ma"), first translate it into English, then use that English version as the search query. "Maile kati din bida paunxu" means "How many days of leave do I get".
@@ -179,13 +213,19 @@ def make_docmind_tools(org_id: str, pii_mapping: dict, sources: list, role: str 
     return [search_documents, list_documents, get_document_overview, get_my_profile]
 
 # CREATE SPECIALIZED AGENTS
-SUPPORT_RULES = """You are the support assistant. You have exactly two tools: create_ticket and get_ticket_status.
+SUPPORT_RULES = """You are the support assistant. You have exactly three tools: create_ticket, get_ticket_status and raise_ticket_priority.
 You cannot search the web or any documents.
-- If the user reports a problem, give 2 or 3 short, simple things to try first, then create a ticket with
-  create_ticket (priority 'low', 'medium' or 'high') and tell them the ticket number.
+- If the user reports a NEW problem, create a ticket with create_ticket (priority 'low', 'medium' or 'high') and tell them the ticket number.
+  Give 2 or 3 short, simple things to try ONLY for problems with a device, an app, a login or the network.
+  For anything about money, payments, transfers, cards or accounts, give NO advice: only create the ticket and say the team will contact them.
+- If create_ticket says the user already has an open ticket, do not create another one: follow what it says.
 - If the user asks about an existing ticket, use get_ticket_status.
+- If the user says an EXISTING problem or ticket is urgent, asks you to hurry, or is upset that it is still not solved,
+  call raise_ticket_priority (with the ticket number if they gave one). Do NOT create a new ticket for this.
+  Tell them the ticket number and what the tool answered. Only say the priority was raised if the tool says "raised".
 - Never call any other tool. Never invent ticket numbers; use only what the tools return.
-- Write your whole answer in the same language as the user's message."""
+- Write your whole answer in the same language as the user's message.
+- If the user's message asks to hurry or says it is urgent when you create a ticket, create it with priority "high"."""
 
 
 
@@ -206,18 +246,34 @@ def orchestrator(state: OrgMindState):
         # Anonymous website visitors can only ask questions. They never get the ticket tools.
     if state.get("role") == "visitor":
         return {"route": "docmind"}
+
+        # If the person already has an open ticket, "please hurry" is about that ticket, not about documents.
+    ticket_note = ("A message that reports something broken, lost, stuck or failed, which the person needs "
+                   "staff to fix or handle (for example an app error, a swallowed card, a failed payment), is a "
+                   "support request even when it is short: answer support. Only questions about what a document "
+                   "or policy says go to documents.")
+    try:
+        from tickets import open_tickets_for
+        if open_tickets_for(state["org_id"], state["user_id"], limit=1):
+            ticket_note += (" The user currently has an open support ticket. A message that asks to hurry or says "
+                            "something is urgent is about that ticket: answer support.")
+    except Exception:
+        pass
     
     routing_prompt = f"""
     Decide which agent should handle this user message.
     Return ONLY one word: 'support' or 'docmind'
 
-    - support: ONLY when the user reports something broken or asks you to create or check a support ticket.
-      Examples: "my laptop won't turn on", "I can't log in, please open a ticket", "what is the status of my ticket?"
+    -  support: ONLY when the user reports something broken, asks you to create or check a support ticket,
+      or says an existing problem or ticket is urgent or asks to speed it up.
+      Examples: "my laptop won't turn on", "I can't log in, please open a ticket", "what is the status of my ticket?",
+      "my problem is very urgent, please hurry", "TKT-0004 is still not solved, I need it today"
     - docmind: for EVERY question about information, rules, policies, hours, days, contacts, procedures
       or anything that could be written in a company document, even if it mentions IT or the helpdesk.
       Examples: "What days is the IT helpdesk open?", "हेल्पडेस्क कति बजे खुल्छ?", "How many leave days do I get?"
 
     If unsure, answer docmind.
+    {ticket_note}
 
     User message: {last_message}
     """
@@ -234,7 +290,9 @@ def run_support_agent(state: OrgMindState):
     from tickets import list_departments
 
     org_id = state["org_id"]
-    tools = make_support_tools(org_id, state["user_id"], state.get("role", "member"), state.get("department"))
+    last = state["messages"][-1]
+    message = last[1] if isinstance(last, tuple) else getattr(last, "content", "")
+    tools = make_support_tools(org_id, state["user_id"], state.get("role", "member"), state.get("department"), message)
     departments = list_departments(org_id)
     prompt = SUPPORT_RULES + (
         "\nWhen you create a ticket, set department_name to the best matching department from this list, "
