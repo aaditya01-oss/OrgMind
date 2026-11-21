@@ -1,3 +1,4 @@
+> Part of the **OrgMind AI** platform (AI engine, API, website). For the architecture, the security design and how to run all of it with one command, see [OrgMind-Stack](https://github.com/aaditya01-oss/OrgMind-Stack).
 # OrgMind AI Engine
 
 The Python service behind OrgMind AI, a security-first organizational AI assistant built for Nepal.
